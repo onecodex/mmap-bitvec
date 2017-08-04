@@ -301,20 +301,24 @@ impl Drop for BitVec {
     }
 }
 
-impl Index<usize> for BitVec {
-    // fairly hacky; it would be nice to have Index<Range>, IndexMut<usize>,
-    // and IndexMut<Range> methods too, but since these have to return
-    // references that's a little tricky
-    type Output = bool;
-    fn index(&self, idx: usize) -> &Self::Output {
-        const TRUE: &'static bool = &true;
-        const FALSE: &'static bool = &false;
-        match self.get(idx) {
-            true => TRUE,
-            false => FALSE,
-        }
-    }
-}
+// In addition to being slower than the `get` method itself, the below is
+// essentially useless as we don't have an equivalent "setter" method.
+// See issue #1 for more details as to why.
+//
+// impl Index<usize> for BitVec {
+//     // fairly hacky; it would be nice to have Index<Range>, IndexMut<usize>,
+//     // and IndexMut<Range> methods too, but since these have to return
+//     // references that's a little tricky
+//     type Output = bool;
+//     fn index(&self, idx: usize) -> &Self::Output {
+//         const TRUE: &'static bool = &true;
+//         const FALSE: &'static bool = &false;
+//         match self.get(idx) {
+//             true => TRUE,
+//             false => FALSE,
+//         }
+//     }
+// }
 
 
 #[test]
