@@ -40,11 +40,20 @@ struct BloomFilter {
 
 impl BloomFilter {
     pub fn new<P>(filename: P, bits: usize, n_hashes: u8) -> Result<Self, io::Error> where P: AsRef<Path> {
-        let bitvec = BitVec::from_file(&filename, bits, false)?;
-        Ok(BloomFilter {
-            bit_vec: bitvec,
-            hashes: n_hashes,
-        })
+        let header = vec![];
+        if Path::exists(filename.as_ref()) {
+            let bitvec = BitVec::from_file(&filename, header.len(), false)?;
+            Ok(BloomFilter {
+                bit_vec: bitvec,
+                hashes: n_hashes,
+            })
+        } else {
+            let bitvec = BitVec::create_file(&filename, bits, &header)?;
+            Ok(BloomFilter {
+                bit_vec: bitvec,
+                hashes: n_hashes,
+            })
+        }
     }
 
     pub fn insert<H>(&mut self, ref item: H) where H: Hash {

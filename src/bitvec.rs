@@ -1,5 +1,6 @@
 use std::fs::OpenOptions;
 use std::io;
+use std::io::{Read, Seek, Write};
 use std::mem::transmute;
 use std::ops::{Index, Range};
 use std::path::Path;
@@ -8,47 +9,83 @@ use memmap::{Mmap, Protection};
 
 pub struct BitVec {
     mmap: Mmap,
+    header: Vec<u8>,
     pub size: usize,
 }
 
 impl BitVec {
-    pub fn from_file<P>(filename: P, size: usize, read_only: bool) -> Result<Self, io::Error> where P: AsRef<Path> {
-        let byte_size = (size >> 3) as u64;
-        let (file, protection) = match read_only {
+    pub fn create_file<P>(filename: P, size: usize, header: &[u8]) -> Result<Self, io::Error> where P: AsRef<Path> {
+        let byte_size = ((size - 1) >> 3) as u64 + 1;
+        // if we're creating the file, we need to make sure it's bug enough for our
+        // purposes (memmap doesn't automatically size the file)
+        let mut file = OpenOptions::new().read(true).write(true).create(true).open(filename)?;
+        file.set_len(header.len() as u64 + 8 + byte_size)?;
+        // file.seek(io::SeekFrom::Start(0))?;
+        file.write_all(header)?;
+        let serialized_size: [u8; 8] = unsafe { transmute((size as u64).to_be()) };
+        println!("{:?}", serialized_size);
+        file.write_all(&serialized_size)?;
+        let mmap = Mmap::open_with_offset(&file, Protection::ReadWrite, header.len() + 8, byte_size as usize)?;
+        Ok(BitVec {
+            header: header.to_vec(),
+            mmap: mmap,
+            size: size,
+        })
+
+    }
+
+    pub fn from_file<P>(filename: P, header_size: usize, read_only: bool) -> Result<Self, io::Error> where P: AsRef<Path> {
+        let (mut file, protection) = match read_only {
             true => {
                 let f = OpenOptions::new().read(true).open(filename)?;
                 (f, Protection::Read)
             },
             false => {
-                if Path::exists(filename.as_ref()) {
-                    let f = OpenOptions::new().read(true).write(true).open(filename)?;
-                    (f, Protection::ReadWrite)
-                } else {
-                    // if we're creating the file, we need to make sure it's bug enough for our
-                    // purposes (memmap doesn't automatically size the file)
-                    let f = OpenOptions::new().read(true).write(true).create(true).open(filename)?;
-                    f.set_len(byte_size)?;
-                    (f, Protection::ReadWrite)
-                }
+                let f = OpenOptions::new().read(true).write(true).open(filename)?;
+                (f, Protection::ReadWrite)
             },
         };
-        if file.metadata()?.len() != byte_size {
+
+        // read the header and the total size
+        let mut header = vec![0; header_size];
+        file.read_exact(&mut header)?;
+        let mut serialized_size = [0; 8];
+        file.read_exact(&mut serialized_size)?;
+        println!("{:?} {:?}", header, serialized_size);
+        let size: u64 = u64::from_be(unsafe { transmute(serialized_size) });
+        println!("{}", size);
+
+        // calculate the total numb
+        let byte_size = ((size - 1) >> 3) + 1;
+        if file.metadata()?.len() != header_size as u64 + 8 + byte_size {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "file not long enough"));
         }
-        let mmap = Mmap::open(&file, protection)?;
+
+        // load the mmap itself and return the whole shebang
+        let mmap = Mmap::open_with_offset(&file, protection, header_size + 8, byte_size as usize)?;
         Ok(BitVec {
+            header: header,
+            mmap: mmap,
+            size: size as usize,
+        })
+    }
+
+    pub fn from_memory(size: usize)  -> Result<Self, io::Error> {
+        let byte_size = ((size - 1) >> 3) as u64 + 1;
+        let mmap = Mmap::anonymous(byte_size as usize, Protection::ReadWrite)?;
+        Ok(BitVec {
+            header: vec![],
             mmap: mmap,
             size: size,
         })
     }
 
-    pub fn from_memory(size: usize)  -> Result<Self, io::Error> {
-        let byte_size = (size >> 3) as u64;
-        let mmap = Mmap::anonymous(byte_size as usize, Protection::ReadWrite)?;
-        Ok(BitVec {
-            mmap: mmap,
-            size: size,
-        })
+    pub fn header(&self) -> &[u8] {
+        &self.header
+    }
+
+    pub fn len(&self) -> usize {
+        self.size
     }
 
     pub fn get(&self, ref i: usize) -> bool {
@@ -283,9 +320,9 @@ impl Index<usize> for BitVec {
 #[test]
 fn test_bitvec() {
     use std::fs::remove_file;
-    let _ = remove_file("./test");
-
-    let mut b = BitVec::from_file("./test", 100, false).unwrap();
+    // let _ = remove_file("./test");
+    let header = vec![];
+    let mut b = BitVec::create_file("./test", 100, &header).unwrap();
     b.set(2, true);
     assert!(!b.get(1));
     assert!(b.get(2));
@@ -296,7 +333,7 @@ fn test_bitvec() {
     // a VScode issue?
     assert!(Path::new("./test").exists());
 
-    let mut b = BitVec::from_file("./test", 100, true).unwrap();
+    let mut b = BitVec::from_file("./test", 0, true).unwrap();
     assert!(!b.get(1));
     assert!(b.get(2));
     assert!(!b.get(100));
