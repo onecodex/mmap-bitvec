@@ -7,13 +7,28 @@ use std::path::Path;
 
 use memmap::{Mmap, Protection};
 
+/// Bit vector backed by a mmap-ed file
+///
+/// # Examples
+///
+/// ```rust
+/// use mmap_bitvec::BitVec;
+///
+/// let mut bv = BitVec::from_memory(128).unwrap();
+/// bv.set_range(2..12, &[0b10, 0b01101101]);
+/// assert_eq!(bv.get_range_u64(2..12), 0b1001101101);
+/// ```
 pub struct BitVec {
     mmap: Mmap,
     header: Vec<u8>,
-    pub size: usize,
+    size: usize,
 }
 
 impl BitVec {
+    /// Creates a new `BitVec` file
+    ///
+    /// The overall size of bit vector (in bits) and a fixed-size header must
+    /// also be provided (although the header can be 0-length).
     pub fn create_file<P>(filename: P, size: usize, header: &[u8]) -> Result<Self, io::Error> where P: AsRef<Path> {
         let byte_size = ((size - 1) >> 3) as u64 + 1;
         // if we're creating the file, we need to make sure it's bug enough for our
@@ -23,7 +38,6 @@ impl BitVec {
         // file.seek(io::SeekFrom::Start(0))?;
         file.write_all(header)?;
         let serialized_size: [u8; 8] = unsafe { transmute((size as u64).to_be()) };
-        println!("{:?}", serialized_size);
         file.write_all(&serialized_size)?;
         let mmap = Mmap::open_with_offset(&file, Protection::ReadWrite, header.len() + 8, byte_size as usize)?;
         Ok(BitVec {
@@ -34,6 +48,11 @@ impl BitVec {
 
     }
 
+    /// Opens an existing `BitVec` file
+    ///
+    /// The header_size must be specified (as it isn't stored in the file to
+    /// allow the magic bytes to be set) and there is an optional read_only
+    /// property that will lock the underlying mmap from writing.
     pub fn from_file<P>(filename: P, header_size: usize, read_only: bool) -> Result<Self, io::Error> where P: AsRef<Path> {
         let (mut file, protection) = match read_only {
             true => {
@@ -51,9 +70,7 @@ impl BitVec {
         file.read_exact(&mut header)?;
         let mut serialized_size = [0; 8];
         file.read_exact(&mut serialized_size)?;
-        println!("{:?} {:?}", header, serialized_size);
         let size: u64 = u64::from_be(unsafe { transmute(serialized_size) });
-        println!("{}", size);
 
         // calculate the total numb
         let byte_size = ((size - 1) >> 3) + 1;
@@ -70,6 +87,10 @@ impl BitVec {
         })
     }
 
+    /// Creates a BitVec backed by memory.
+    ///
+    /// Note that unlike the `create_file` and `from_file` no header is set.
+    /// The BitVec is also read/write by default.
     pub fn from_memory(size: usize)  -> Result<Self, io::Error> {
         let byte_size = ((size - 1) >> 3) as u64 + 1;
         let mmap = Mmap::anonymous(byte_size as usize, Protection::ReadWrite)?;
@@ -80,14 +101,21 @@ impl BitVec {
         })
     }
 
+    // Returns the header
     pub fn header(&self) -> &[u8] {
         &self.header
     }
 
+    /// Returns the length (in bits) of the bit vector
     pub fn len(&self) -> usize {
         self.size
     }
 
+    /// Check a single value in the BitVec, returning its true/false status
+    ///
+    /// # Panics
+    ///
+    /// Panics if the location, i, is outside the bounds of the bit vector
     pub fn get(&self, ref i: usize) -> bool {
         if *i > self.size {
             panic!("Invalid bit vector index");
@@ -101,6 +129,13 @@ impl BitVec {
         }
     }
 
+    /// Read/copy an unaligned chunk of the BitVec
+    ///
+    /// # Panics
+    ///
+    /// Explicitly panics if the end location, r.end, is outside the bounds
+    /// of the bit vector. A panic may also occur if r.start is greater than
+    /// r.end.
     pub fn get_range(&self, ref r: Range<usize>) -> Vec<u8> {
         if (r.end - 1) > self.size {
             panic!("Range ends outside of BitVec")
@@ -130,6 +165,14 @@ impl BitVec {
         v
     }
 
+    /// Read an unaligned chunk of the BitVec into a u64
+    ///
+    /// # Panics
+    ///
+    /// Explicitly panics if the end location, r.end, is outside the bounds
+    /// of the bit vector or if the range specified is greater than 64 bits.
+    /// (Use `get_range` instead if you need to read larger chunks) A panic
+    /// may also occur if r.start is greater than r.end.
     pub fn get_range_u64(&self, ref r: Range<usize>) -> u64 {
         if r.end - r.start > 64 {
             panic!("Range too large (>64)")
@@ -165,6 +208,11 @@ impl BitVec {
         v & 0xFFFFFFFFFFFFFFFF >> (64 - new_size)
     }
 
+    /// Set a single bit in the bit vector
+    ///
+    /// # Panics
+    ///
+    /// Panics if the location, i, is outside the bounds of the bit vector
     pub fn set(&mut self, ref i: usize, ref x: bool) {
         if *i > self.size {
             panic!("Invalid bit vector index");
@@ -180,6 +228,17 @@ impl BitVec {
         }
     }
 
+    /// Set a unaligned range of bits in the bit vector from a byte slice.
+    ///
+    /// Note this operation ORs the passed byteslice and the existing bitmask.
+    /// If you need to clear (AND) bits, use the `set_range_u64` function.
+    ///
+    /// # Panics
+    ///
+    /// Explicitly panics if the end location, r.end, is outside the bounds
+    /// of the bit vector or if the byte slice passed in is a different size
+    /// from the range specified. A panic may also occur if r.start is greater
+    /// than r.end.
     pub fn set_range(&mut self, ref r: Range<usize>, ref x: &[u8]) {
         if (r.end - 1) > self.size {
             panic!("Range ends outside of BitVec")
@@ -218,6 +277,17 @@ impl BitVec {
         }
     }
 
+    /// Set a unaligned range of bits using a u64.
+    ///
+    /// Note this operation ANDs the passed u64 and the existing bitmask
+    /// (to allowing clearing already set bits). If you need to OR bits, use
+    /// the `set_range` function.
+    ///
+    /// # Panics
+    ///
+    /// Explicitly panics if the end location, r.end, is outside the bounds
+    /// of the bit vector. A panic may also occur if r.start is greater than
+    /// r.end.
     pub fn set_range_u64(&mut self, ref r: Range<usize>, ref x: u64) {
         if (r.end - 1) > self.size {
             panic!("Range ends outside of BitVec")
@@ -295,6 +365,8 @@ impl BitVec {
     }
 }
 
+/// Drop is implemented for `BitVec` to explicitly flush any changes to the
+/// file before the memory map is closed.
 impl Drop for BitVec {
     fn drop(&mut self) {
         let _ = self.mmap.flush();
@@ -324,7 +396,7 @@ impl Drop for BitVec {
 #[test]
 fn test_bitvec() {
     use std::fs::remove_file;
-    // let _ = remove_file("./test");
+
     let header = vec![];
     let mut b = BitVec::create_file("./test", 100, &header).unwrap();
     b.set(2, true);
@@ -332,9 +404,6 @@ fn test_bitvec() {
     assert!(b.get(2));
     assert!(!b.get(100));
     drop(b);
-    // FIXME: something incredibly weird is happening here where this
-    // file gets destroyed during the drop? (sometimes before!) -> this may be
-    // a VScode issue?
     assert!(Path::new("./test").exists());
 
     let mut b = BitVec::from_file("./test", 0, true).unwrap();
@@ -342,7 +411,7 @@ fn test_bitvec() {
     assert!(b.get(2));
     assert!(!b.get(100));
 
-    let _ = remove_file("./test");
+    remove_file("./test").unwrap();
 }
 
 #[test]
