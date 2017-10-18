@@ -6,3 +6,6 @@ authors = ["Roderick Bovee <roderick@onecodex.com>"]
 [dependencies]
 memmap = "0.5.2"
 murmurhash3 = "0.0.5"
+
+[features]
+u128 = []

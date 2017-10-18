@@ -8,16 +8,16 @@ use bitvec::BitVec;
 
 // we don't want to use murmurhash3::Murmur3Hasher b/c it makes copies of the
 // bytes to be hashed with every single `hash` call
-struct MurmurHasher(u64, u64);
+pub struct MurmurHasher(u64, u64);
 
 impl MurmurHasher {
     pub fn new() -> Self {
         MurmurHasher(0, 0)
     }
 
-    // pub fn values(&self) -> (u64, u64) {
-    //     (self.0, self.1)
-    // }
+    pub fn values(&self) -> (u64, u64) {
+        (self.0, self.1)
+    }
 }
 
 impl Hasher for MurmurHasher {
@@ -47,9 +47,9 @@ impl BloomFilter {
         let bitvec = match filename {
             Some(filename) => {
                 if Path::exists(filename.as_ref()) {
-                    BitVec::from_file(&filename, Some(b"!!"), false)?
+                    BitVec::open(&filename, Some(b"!!"), false)?
                 } else {
-                    BitVec::create_file(&filename, bits, b"!!", &header)?
+                    BitVec::create(&filename, bits, b"!!", &header)?
                 }
             },
             None => BitVec::from_memory(bits)?
@@ -62,22 +62,22 @@ impl BloomFilter {
 
     /// Insert an item into the bloom filter.
     pub fn insert<H>(&mut self, item: H) where H: Hash {
+        let size = self.bit_vec.size();
         let mut hasher = MurmurHasher::new();
         for _ in 0..self.hashes {
             item.hash(&mut hasher);
             let hash: u64 = hasher.finish();
-            let size = self.bit_vec.size();
             self.bit_vec.set(hash as usize % size, true);
         }
     }
 
     /// Check if an item is in the bloom filter already.
     pub fn contains<H>(&self, item: H) -> bool where H: Hash {
+        let size = self.bit_vec.size();
         let mut hasher = MurmurHasher::new();
         for _ in 0..self.hashes {
             item.hash(&mut hasher);
             let hash: u64 = hasher.finish();
-            let size = self.bit_vec.size();
             if !self.bit_vec.get(hash as usize % size) {
                 return false;
             }

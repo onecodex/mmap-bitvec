@@ -7,6 +7,15 @@ use std::path::Path;
 
 use memmap::{Mmap, Protection};
 
+#[cfg(not(feature = "u128"))]
+type BitVecSlice = u64;
+#[cfg(not(feature = "u128"))]
+const BIT_VEC_SLICE_SIZE: u8 = 64;
+#[cfg(feature = "u128")]
+type BitVecSlice = u128;
+#[cfg(feature = "u128")]
+const BIT_VEC_SLICE_SIZE: u8 = 128;
+
 /// Bit vector backed by a mmap-ed file
 ///
 /// # Examples
@@ -15,8 +24,8 @@ use memmap::{Mmap, Protection};
 /// use mmap_bitvec::BitVec;
 ///
 /// let mut bv = BitVec::from_memory(128).unwrap();
-/// bv.set_range(2..12, &[0b10, 0b01101101]);
-/// assert_eq!(bv.get_range_u64(2..12), 0b1001101101);
+/// bv.set_range_bytes(2..12, &[0b10, 0b01101101]);
+/// assert_eq!(bv.get_range(2..12), 0b1001101101);
 /// ```
 pub struct BitVec {
     mmap: Mmap,
@@ -29,7 +38,7 @@ impl BitVec {
     ///
     /// The overall size of bit vector (in bits) and a fixed-size header must
     /// also be provided (although the header can be 0-length).
-    pub fn create_file<P>(filename: P, size: usize, magic: &[u8; 2], header: &[u8]) -> Result<Self, io::Error> where P: AsRef<Path> {
+    pub fn create<P>(filename: P, size: usize, magic: &[u8; 2], header: &[u8]) -> Result<Self, io::Error> where P: AsRef<Path> {
         assert!(header.len() < 65_536);
 
         let byte_size = ((size - 1) >> 3) as u64 + 1;
@@ -63,7 +72,7 @@ impl BitVec {
     /// The header_size must be specified (as it isn't stored in the file to
     /// allow the magic bytes to be set) and there is an optional read_only
     /// property that will lock the underlying mmap from writing.
-    pub fn from_file<P>(filename: P, magic: Option<&[u8; 2]>, read_only: bool) -> Result<Self, io::Error> where P: AsRef<Path> {
+    pub fn open<P>(filename: P, magic: Option<&[u8; 2]>, read_only: bool) -> Result<Self, io::Error> where P: AsRef<Path> {
         let (mut file, protection) = if read_only {
             let f = OpenOptions::new().read(true).open(filename)?;
             (f, Protection::Read)
@@ -113,7 +122,7 @@ impl BitVec {
 
     /// Creates a BitVec backed by memory.
     ///
-    /// Note that unlike the `create_file` and `from_file` no header is set.
+    /// Note that unlike the `create` and `open` no header is set.
     /// The BitVec is also read/write by default.
     pub fn from_memory(size: usize)  -> Result<Self, io::Error> {
         let byte_size = ((size - 1) >> 3) as u64 + 1;
@@ -160,7 +169,7 @@ impl BitVec {
     /// Explicitly panics if the end location, r.end, is outside the bounds
     /// of the bit vector. A panic may also occur if r.start is greater than
     /// r.end.
-    pub fn get_range(&self, r: Range<usize>) -> Vec<u8> {
+    pub fn get_range_bytes(&self, r: Range<usize>) -> Vec<u8> {
         if (r.end - 1) > self.size {
             panic!("Range ends outside of BitVec")
         }
@@ -189,7 +198,7 @@ impl BitVec {
         v
     }
 
-    /// Read an unaligned chunk of the BitVec into a u64
+    /// Read an unaligned chunk of the BitVec into a u64/u128
     ///
     /// # Panics
     ///
@@ -197,9 +206,9 @@ impl BitVec {
     /// of the bit vector or if the range specified is greater than 64 bits.
     /// (Use `get_range` instead if you need to read larger chunks) A panic
     /// may also occur if r.start is greater than r.end.
-    pub fn get_range_u64(&self, r: Range<usize>) -> u64 {
-        if r.end - r.start > 64 {
-            panic!("Range too large (>64)")
+    pub fn get_range(&self, r: Range<usize>) -> BitVecSlice {
+        if r.end - r.start > BIT_VEC_SLICE_SIZE as usize {
+            panic!(format!("Range too large (>{})", BIT_VEC_SLICE_SIZE))
         } else if (r.end - 1) > self.size {
             panic!("Range ends outside of BitVec")
         }
@@ -212,9 +221,9 @@ impl BitVec {
 
         // read the last byte first
         unsafe {
-            v = u64::from(*ptr.offset(byte_idx_en as isize));
+            v = BitVecSlice::from(*ptr.offset(byte_idx_en as isize));
         }
-        // align the end of the data with the end of the u64
+        // align the end of the data with the end of the u64/u128
         v >>= 7 - ((r.end - 1) & 7);
 
         let bit_offset = new_size + (r.start & 7) as u8;
@@ -224,12 +233,12 @@ impl BitVec {
         // this for now and we can add a special case for that later
         for (new_idx, old_idx) in (byte_idx_st..byte_idx_en).enumerate() {
             unsafe {
-                v |= u64::from(*ptr.offset(old_idx as isize)) << (bit_offset - 8u8 * (new_idx as u8 + 1));
+                v |= BitVecSlice::from(*ptr.offset(old_idx as isize)) << (bit_offset - 8u8 * (new_idx as u8 + 1));
             }
         }
 
         // mask out the high bits in case we copied extra
-        v & 0xFFFF_FFFF_FFFF_FFFF >> (64 - new_size)
+        v & BitVecSlice::max_value() >> (BIT_VEC_SLICE_SIZE - new_size)
     }
 
     /// Set a single bit in the bit vector
@@ -256,7 +265,6 @@ impl BitVec {
     /// Set a unaligned range of bits in the bit vector from a byte slice.
     ///
     /// Note this operation ORs the passed byteslice and the existing bitmask.
-    /// If you need to clear (AND) bits, use the `set_range_u64` function.
     ///
     /// # Panics
     ///
@@ -264,7 +272,7 @@ impl BitVec {
     /// of the bit vector or if the byte slice passed in is a different size
     /// from the range specified. A panic may also occur if r.start is greater
     /// than r.end.
-    pub fn set_range(&mut self, r: Range<usize>, x: &[u8]) {
+    pub fn set_range_bytes(&mut self, r: Range<usize>, x: &[u8]) {
         if (r.end - 1) > self.size {
             panic!("Range ends outside of BitVec")
         }
@@ -304,16 +312,14 @@ impl BitVec {
 
     /// Set a unaligned range of bits using a u64.
     ///
-    /// Note this operation ANDs the passed u64 and the existing bitmask
-    /// (to allowing clearing already set bits). If you need to OR bits, use
-    /// the `set_range` function.
+    /// Note this operation ORs the passed u64 and the existing bitmask
     ///
     /// # Panics
     ///
     /// Explicitly panics if the end location, r.end, is outside the bounds
     /// of the bit vector. A panic may also occur if r.start is greater than
     /// r.end.
-    pub fn set_range_u64(&mut self, r: Range<usize>, x: u64) {
+    pub fn set_range(&mut self, r: Range<usize>, x: BitVecSlice) {
         if (r.end - 1) > self.size {
             panic!("Range ends outside of BitVec")
         }
@@ -333,14 +339,70 @@ impl BitVec {
         // new value get masked over the existing 1's
         let mmap: *mut u8 = self.mmap.mut_ptr();
         unsafe {
-            match 0xFFu8.checked_shl(u32::from(size_front)) {
-                Some(mask) => {
-                    *mmap.offset(byte_idx_st as isize) &= mask;
-                    *mmap.offset(byte_idx_st as isize) |= front_byte;
-                },
-                None => {
-                    *mmap.offset(byte_idx_st as isize) = front_byte;
-                },
+            *mmap.offset(byte_idx_st as isize) |= front_byte;
+        }
+
+        // if the front is all there is, we can bail now
+        if byte_idx_st == byte_idx_en {
+            return;
+        }
+
+        // set the last byte (also a "partial" byte like the first
+        let mut size_back = (r.end & 7) as u8;
+        if size_back == 0 {
+             size_back = 8;
+        }
+        let back_byte = (x << (BIT_VEC_SLICE_SIZE - size_back) >> (BIT_VEC_SLICE_SIZE - 8)) as u8;
+        unsafe {
+            *mmap.offset(byte_idx_en as isize) |= back_byte;
+        }
+
+        // only two bytes long, bail out
+        if byte_idx_st + 1 == byte_idx_en {
+            return;
+        }
+
+        let size_main = new_size - size_front;
+        // shift off the first byte (and we don't care about the last byte,
+        // because we won't iterate through it) and then make sure that the
+        // u64 is stored in the "right" order in memory
+        let main_chunk = (x << (BIT_VEC_SLICE_SIZE - size_main)).to_be();
+
+        let bytes: [u8; BIT_VEC_SLICE_SIZE as usize / 8];
+        unsafe {
+            bytes = transmute(main_chunk);
+        }
+        for (byte_idx, byte) in ((byte_idx_st + 1)..byte_idx_en).zip(bytes.iter()) {
+            unsafe {
+                *mmap.offset(byte_idx as isize) |= *byte;
+            }
+        }
+    }
+
+    /// Zeros out a chunk of the bitvector
+    ///
+    /// Note this operation can be used to AND a bitmask into the bitvector
+    ///
+    /// # Panics
+    ///
+    /// Explicitly panics if the end location, r.end, is outside the bounds
+    /// of the bit vector. A panic may also occur if r.start is greater than
+    /// r.end.
+    pub fn clear_range(&mut self, r: Range<usize>) {
+       if (r.end - 1) > self.size {
+            panic!("Range ends outside of BitVec")
+        }
+        let byte_idx_st = (r.start >> 3) as usize;
+        let byte_idx_en = ((r.end - 1) >> 3) as usize;
+
+        let mmap: *mut u8 = self.mmap.mut_ptr();
+
+        // set front with an AND mask to make sure this all the 0's in the
+        // new value get masked over the existing 1's
+        let size_front = 8u8 - (r.start & 7) as u8;
+        if let Some(mask) = 0xFFu8.checked_shl(u32::from(size_front)) {
+            unsafe {
+                *mmap.offset(byte_idx_st as isize) &= mask;
             }
         }
 
@@ -354,16 +416,9 @@ impl BitVec {
         if size_back == 0 {
              size_back = 8;
         }
-        let back_byte = (x << (64 - new_size + size_back) >> 56) as u8;
-        unsafe {
-            match 0xFFu8.checked_shr(u32::from(size_back)) {
-                Some(mask) => {
-                    *mmap.offset(byte_idx_en as isize) &= mask;
-                    *mmap.offset(byte_idx_en as isize) |= back_byte;
-                },
-                None => {
-                    *mmap.offset(byte_idx_en as isize) = back_byte;
-                },
+        if let Some(mask) = 0xFFu8.checked_shr(u32::from(size_back)) {
+            unsafe {
+                *mmap.offset(byte_idx_en as isize) &= mask;
             }
         }
 
@@ -372,19 +427,10 @@ impl BitVec {
             return;
         }
 
-        let size_main = new_size - size_front;
-        // shift off the first byte (and we don't care about the last byte,
-        // because we won't iterate through it) and then make sure that the
-        // u64 is stored in the "right" order in memory
-        let main_chunk = (x << (64 - size_main)).to_be();
-
-        let bytes: [u8; 8];
-        unsafe {
-            bytes = transmute(main_chunk);
-        }
-        for (byte_idx, byte) in ((byte_idx_st + 1)..byte_idx_en).zip(bytes.iter()) {
+        // zero out all the middle bytes (maybe there's a faster way?)
+        for byte_idx in (byte_idx_st + 1)..byte_idx_en {
             unsafe {
-                *mmap.offset(byte_idx as isize) = *byte;
+                *mmap.offset(byte_idx as isize) = 0u8;
             }
         }
     }
@@ -423,7 +469,7 @@ fn test_bitvec() {
     use std::fs::remove_file;
 
     let header = vec![];
-    let mut b = BitVec::create_file("./test", 100, b"!!", &header).unwrap();
+    let mut b = BitVec::create("./test", 100, b"!!", &header).unwrap();
     b.set(2, true);
     assert!(!b.get(1));
     assert!(b.get(2));
@@ -431,7 +477,7 @@ fn test_bitvec() {
     drop(b);
     assert!(Path::new("./test").exists());
 
-    let b = BitVec::from_file("./test", Some(b"!!"), true).unwrap();
+    let b = BitVec::open("./test", Some(b"!!"), true).unwrap();
     assert!(!b.get(1));
     assert!(b.get(2));
     assert!(!b.get(100));
@@ -440,88 +486,91 @@ fn test_bitvec() {
 }
 
 #[test]
-fn test_bitvec_get_range_u64() {
-    let mut b = BitVec::from_memory(128).unwrap();
-    b.set(2, true);
-    b.set(3, true);
-    b.set(5, true);
-    assert_eq!(b.get_range_u64(0..8), 52, "indexing within a single byte");
-    assert_eq!(b.get_range_u64(0..16), 13312, "indexing multiple bytes");
-    assert_eq!(b.get_range_u64(0..64), 3_746_994_889_972_252_672, "indexing the maximum # of bytes");
-    assert_eq!(b.get_range_u64(64..128), 0, "indexing the maximum # of bytes to the end");
-    assert_eq!(b.get_range_u64(2..10), 208, "indexing across bytes");
-    assert_eq!(b.get_range_u64(2..66), 14_987_979_559_889_010_688, "indexing the maximum # of bytes across bytes");
-    assert_eq!(b.get_range_u64(115..128), 0, "indexing across bytes to the end");
-}
-
-#[test]
 fn test_bitvec_get_range() {
     let mut b = BitVec::from_memory(128).unwrap();
     b.set(2, true);
     b.set(3, true);
     b.set(5, true);
-    assert_eq!(b.get_range(0..8), &[0x34], "indexing within a single byte");
-    assert_eq!(b.get_range(0..16), &[0x34, 0x00], "indexing multiple bytes");
-    assert_eq!(b.get_range(0..64), &[0x34, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00], "indexing the maximum # of bytes");
-    assert_eq!(b.get_range(64..128), &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00], "indexing the maximum # of bytes to the end");
-    assert_eq!(b.get_range(2..10), &[0xD0], "indexing across bytes");
-    assert_eq!(b.get_range(2..66), &[0xD0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00], "indexing the maximum # of bytes across bytes");
-    assert_eq!(b.get_range(115..128), &[0x00, 0x00], "indexing across bytes to the end");
+    assert_eq!(b.get_range(0..8), 52, "indexing within a single byte");
+    assert_eq!(b.get_range(0..16), 13312, "indexing multiple bytes");
+    assert_eq!(b.get_range(0..64), 3_746_994_889_972_252_672, "indexing the maximum # of bytes");
+    assert_eq!(b.get_range(64..128), 0, "indexing the maximum # of bytes to the end");
+    assert_eq!(b.get_range(2..10), 208, "indexing across bytes");
+    assert_eq!(b.get_range(2..66), 14_987_979_559_889_010_688, "indexing the maximum # of bytes across bytes");
+    assert_eq!(b.get_range(115..128), 0, "indexing across bytes to the end");
 }
 
 #[test]
-fn test_bitvec_set_range_u64() {
+fn test_bitvec_get_range_bytes() {
     let mut b = BitVec::from_memory(128).unwrap();
-    b.set_range_u64(0..4, 0b0101);
-    assert_eq!(b.get_range_u64(0..4), 0b0101);
-    b.set_range_u64(5..8, 0b0101);
-    assert_eq!(b.get_range_u64(5..8), 0b0101);
-
-    // test across a byte boundary
-    b.set_range_u64(6..9, 0b111);
-    assert_eq!(b.get_range_u64(6..9), 0b111);
-
-    // test masking works on both sides of a byte boundary
-    b.set_range_u64(0..16, 0xFFFF);
-    assert_eq!(b.get_range_u64(0..16), 0xFFFF);
-    b.set_range_u64(4..12, 0);
-    assert_eq!(b.get_range_u64(0..16), 0xF00F);
-
-    // test setting multiple bytes
-    b.set_range_u64(20..36, 0xFFFF);
-    assert_eq!(b.get_range_u64(20..36), 0xFFFF);
-
-    // set an entire range
-    b.set_range_u64(0..64, 0);
-    assert_eq!(b.get_range_u64(0..64), 0);
+    b.set(2, true);
+    b.set(3, true);
+    b.set(5, true);
+    assert_eq!(b.get_range_bytes(0..8), &[0x34], "indexing within a single byte");
+    assert_eq!(b.get_range_bytes(0..16), &[0x34, 0x00], "indexing multiple bytes");
+    assert_eq!(b.get_range_bytes(0..64), &[0x34, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00], "indexing the maximum # of bytes");
+    assert_eq!(b.get_range_bytes(64..128), &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00], "indexing the maximum # of bytes to the end");
+    assert_eq!(b.get_range_bytes(2..10), &[0xD0], "indexing across bytes");
+    assert_eq!(b.get_range_bytes(2..66), &[0xD0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00], "indexing the maximum # of bytes across bytes");
+    assert_eq!(b.get_range_bytes(115..128), &[0x00, 0x00], "indexing across bytes to the end");
 }
 
 #[test]
 fn test_bitvec_set_range() {
     let mut b = BitVec::from_memory(128).unwrap();
-    b.set_range(0..4, &[0x05]);
-    assert_eq!(b.get_range_u64(0..4), 0b0101);
-    b.set_range(5..8, &[0x05]);
-    assert_eq!(b.get_range_u64(5..8), 0b0101);
-
-    // clear the first part
-    b.set_range_u64(0..16, 0);
+    b.set_range(0..4, 0b0101);
+    assert_eq!(b.get_range(0..4), 0b0101);
+    b.set_range(5..8, 0b0101);
+    assert_eq!(b.get_range(5..8), 0b0101);
 
     // test across a byte boundary
-    b.set_range(6..10, &[0x0D]);
-    assert_eq!(b.get_range_u64(6..10), 0x0D);
+    b.set_range(6..9, 0b111);
+    assert_eq!(b.get_range(6..9), 0b111);
+
+    // test zeroing works on both sides of a byte boundary
+    b.set_range(0..16, 0xFFFF);
+    assert_eq!(b.get_range(0..16), 0xFFFF);
+    b.clear_range(4..12);
+    assert_eq!(b.get_range(0..16), 0xF00F);
+
+    // test setting multiple bytes (and that overflow doesn't happen)
+    b.set_range(20..36, 0xFFFF);
+    assert_eq!(b.get_range(16..20), 0x0);
+    assert_eq!(b.get_range(20..36), 0xFFFF);
+    assert_eq!(b.get_range(36..44), 0x0);
+
+    // set an entire range
+    assert_eq!(b.get_range(39..103), 0x0);
+    b.set_range(39..103, 0xABCD1234);
+    assert_eq!(b.get_range(39..103), 0xABCD1234);
+}
+
+#[test]
+fn test_bitvec_set_range_bytes() {
+    let mut b = BitVec::from_memory(128).unwrap();
+    b.set_range_bytes(0..4, &[0x05]);
+    assert_eq!(b.get_range(0..4), 0b0101);
+    b.set_range_bytes(5..8, &[0x05]);
+    assert_eq!(b.get_range(5..8), 0b0101);
+
+    // clear the first part
+    b.clear_range(0..16);
+
+    // test across a byte boundary
+    b.set_range_bytes(6..10, &[0x0D]);
+    assert_eq!(b.get_range(6..10), 0x0D);
 
     // test setting multiple bytes
-    b.set_range(0..16, &[0xFF, 0xFF]);
-    assert_eq!(b.get_range_u64(0..16), 0xFFFF);
+    b.set_range_bytes(0..16, &[0xFF, 0xFF]);
+    assert_eq!(b.get_range(0..16), 0xFFFF);
 
     // test setting multiple bytes across boundaries
-    b.set_range(20..36, &[0xFF, 0xFF]);
-    assert_eq!(b.get_range_u64(20..36), 0xFFFF);
+    b.set_range_bytes(20..36, &[0xFF, 0xFF]);
+    assert_eq!(b.get_range(20..36), 0xFFFF);
 
     // testing ORing works
-    b.set_range(64..80, &[0xA0, 0x0A]);
-    assert_eq!(b.get_range_u64(64..80), 0xA00A);
-    b.set_range(64..80, &[0x0B, 0xB0]);
-    assert_eq!(b.get_range_u64(64..80), 0xABBA);
+    b.set_range_bytes(64..80, &[0xA0, 0x0A]);
+    assert_eq!(b.get_range(64..80), 0xA00A);
+    b.set_range_bytes(64..80, &[0x0B, 0xB0]);
+    assert_eq!(b.get_range(64..80), 0xABBA);
 }
