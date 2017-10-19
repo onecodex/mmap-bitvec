@@ -10,6 +10,6 @@ pub mod bitvec;
 pub mod bloom;
 
 #[doc(inline)]
-pub use bitvec::BitVec;
+pub use bitvec::{BitVec, BitVecSlice, BIT_VEC_SLICE_SIZE};
 #[doc(inline)]
 pub use bloom::BloomFilter;

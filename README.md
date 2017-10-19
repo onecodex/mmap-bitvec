@@ -10,5 +10,5 @@ data structures derived from bit-vectors.
 
     b.set(2, true);
     assert!(b.get(2));
-    assert_eq!(b.get_range(0..8), &[0b00100000]);
+    assert_eq!(b.get_range(0..8), 0b00100000);
 ```

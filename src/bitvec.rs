@@ -1,4 +1,4 @@
-use std::fs::OpenOptions;
+use std::fs::{metadata, OpenOptions};
 use std::io;
 use std::io::{Read, Write};
 use std::mem::transmute;
@@ -8,13 +8,13 @@ use std::path::Path;
 use memmap::{Mmap, Protection};
 
 #[cfg(not(feature = "u128"))]
-type BitVecSlice = u64;
+pub type BitVecSlice = u64;
 #[cfg(not(feature = "u128"))]
-const BIT_VEC_SLICE_SIZE: u8 = 64;
+pub const BIT_VEC_SLICE_SIZE: u8 = 64;
 #[cfg(feature = "u128")]
-type BitVecSlice = u128;
+pub type BitVecSlice = u128;
 #[cfg(feature = "u128")]
-const BIT_VEC_SLICE_SIZE: u8 = 128;
+pub const BIT_VEC_SLICE_SIZE: u8 = 128;
 
 /// Bit vector backed by a mmap-ed file
 ///
@@ -117,6 +117,23 @@ impl BitVec {
             mmap: mmap,
             size: size as usize,
             header: header.into_boxed_slice(),
+        })
+    }
+
+    /// Opens a BitVec file that doesn't have our "standard" file header format
+    ///
+    ///  Useful for opening legacy bitvec formats.
+    pub fn open_no_header<P>(filename: P, offset: usize) -> Result<Self, io::Error> where P: AsRef<Path> {
+        let file_size = metadata(&filename)?.len() as usize;
+        let byte_size = file_size - offset;
+        let f = OpenOptions::new().read(true).open(&filename)?;
+        let mmap = Mmap::open_with_offset(&f, Protection::Read, offset,
+                                          byte_size as usize)?;
+
+        Ok(BitVec {
+            mmap: mmap,
+            size: byte_size * 8,
+            header: Box::new([]),
         })
     }
 
@@ -483,6 +500,20 @@ fn test_bitvec() {
     assert!(!b.get(100));
 
     remove_file("./test").unwrap();
+}
+
+#[test]
+fn test_open_no_header() {
+    use std::fs::remove_file;
+
+    let header = vec![];
+    // the bitvector has to be a size with a multiple of 8 because the
+    // no_header code always opens to the end of the last byte
+    let _ = BitVec::create("./test_headerless", 80, b"!!", &header).unwrap();
+    assert!(Path::new("./test_headerless").exists());
+    let b = BitVec::open_no_header("./test_headerless", 12).unwrap();
+    assert_eq!(b.size(), 80);
+    remove_file("./test_headerless").unwrap();
 }
 
 #[test]
