@@ -198,7 +198,10 @@ impl BitVec {
             panic!("Invalid bit vector index");
         }
         let byte_idx = (i >> 3) as isize;
+        #[cfg(not(feature = "backward_bytes"))]
         let bit_idx = 7 - (i & 7) as u8;
+        #[cfg(feature = "backward_bytes")]
+        let bit_idx = (i & 7) as u8;
 
         let mmap: *const u8 = self.mmap.ptr();
         unsafe { (*mmap.offset(byte_idx) & (1 << bit_idx)) != 0 }
@@ -225,7 +228,7 @@ impl BitVec {
         // `shift` is the same as the position of the last bit
         let shift = (r.end & 7) as u8;
         for (new_idx, old_idx) in (byte_idx_st..byte_idx_en + 1).enumerate() {
-            let old_val = unsafe { *ptr.offset(old_idx as isize) };
+            let old_val = unsafe { order_byte(*ptr.offset(old_idx as isize)) };
             if new_idx > 0 {
                 if let Some(shifted_val) = old_val.checked_shr(u32::from(shift)) {
                     v[new_idx - 1] |= shifted_val;
@@ -261,7 +264,7 @@ impl BitVec {
 
         // read the last byte first
         unsafe {
-            v = BitVecSlice::from(*ptr.offset(byte_idx_en as isize));
+            v = BitVecSlice::from(order_byte(*ptr.offset(byte_idx_en as isize)));
         }
         // align the end of the data with the end of the u64/u128
         v >>= 7 - ((r.end - 1) & 7);
@@ -273,7 +276,7 @@ impl BitVec {
         // this for now and we can add a special case for that later
         for (new_idx, old_idx) in (byte_idx_st..byte_idx_en).enumerate() {
             unsafe {
-                v |= BitVecSlice::from(*ptr.offset(old_idx as isize)) <<
+                v |= BitVecSlice::from(order_byte(*ptr.offset(old_idx as isize))) <<
                     (bit_offset - 8u8 * (new_idx as u8 + 1));
             }
         }
@@ -292,7 +295,11 @@ impl BitVec {
             panic!("Invalid bit vector index");
         }
         let byte_idx = (i >> 3) as isize;
+        #[cfg(not(feature = "backward_bytes"))]
         let bit_idx = 7 - (i & 7) as u8;
+        #[cfg(feature = "backward_bytes")]
+        let bit_idx = (i & 7) as u8;
+
         let mmap: *mut u8 = self.mmap.mut_ptr();
         unsafe {
             if x {
@@ -341,12 +348,12 @@ impl BitVec {
             let shifted_val = val.checked_shr(u32::from(8 - shift)).unwrap_or(0);
             if idx > 0 && shift != 8 {
                 unsafe {
-                    *mmap.offset(idx as isize - 1) |= shifted_val;
+                    *mmap.offset(idx as isize - 1) |= order_byte(shifted_val);
                 }
             }
             let shifted_val = (val & mask).checked_shl(u32::from(shift)).unwrap_or(*val);
             unsafe {
-                *mmap.offset(idx as isize) |= shifted_val;
+                *mmap.offset(idx as isize) |= order_byte(shifted_val);
             }
         }
     }
@@ -380,7 +387,7 @@ impl BitVec {
         // new value get masked over the existing 1's
         let mmap: *mut u8 = self.mmap.mut_ptr();
         unsafe {
-            *mmap.offset(byte_idx_st as isize) |= front_byte;
+            *mmap.offset(byte_idx_st as isize) |= order_byte(front_byte);
         }
 
         // if the front is all there is, we can bail now
@@ -395,7 +402,7 @@ impl BitVec {
         }
         let back_byte = (x << (BIT_VEC_SLICE_SIZE - size_back) >> (BIT_VEC_SLICE_SIZE - 8)) as u8;
         unsafe {
-            *mmap.offset(byte_idx_en as isize) |= back_byte;
+            *mmap.offset(byte_idx_en as isize) |= order_byte(back_byte);
         }
 
         // only two bytes long, bail out
@@ -415,7 +422,7 @@ impl BitVec {
         }
         for (byte_idx, byte) in ((byte_idx_st + 1)..byte_idx_en).zip(bytes.iter()) {
             unsafe {
-                *mmap.offset(byte_idx as isize) |= *byte;
+                *mmap.offset(byte_idx as isize) |= order_byte(*byte);
             }
         }
     }
@@ -443,7 +450,7 @@ impl BitVec {
         let size_front = 8u8 - (r.start & 7) as u8;
         if let Some(mask) = 0xFFu8.checked_shl(u32::from(size_front)) {
             unsafe {
-                *mmap.offset(byte_idx_st as isize) &= mask;
+                *mmap.offset(byte_idx_st as isize) &= order_byte(mask);
             }
         }
 
@@ -459,7 +466,7 @@ impl BitVec {
         }
         if let Some(mask) = 0xFFu8.checked_shr(u32::from(size_back)) {
             unsafe {
-                *mmap.offset(byte_idx_en as isize) &= mask;
+                *mmap.offset(byte_idx_en as isize) &= order_byte(mask);
             }
         }
 
@@ -503,6 +510,36 @@ impl Drop for BitVec {
 //         }
 //     }
 // }
+
+#[inline]
+#[cfg(not(feature = "backward_bytes"))]
+fn order_byte(b: u8) -> u8 {
+    b
+}
+
+#[inline]
+#[cfg(feature = "backward_bytes")]
+fn order_byte(b: u8) -> u8 {
+    // in python: ','.join(str(eval('{:08b}b0'.format(i)[::-1])) for i in range(256))
+    #[cfg_attr(rustfmt, rustfmt_skip)]
+    const BACKWARDS: [u8; 256] = [
+        0,128,64,192,32,160,96,224,16,144,80,208,48,176,112,240,8,136,72,
+        200,40,168,104,232,24,152,88,216,56,184,120,248,4,132,68,196,36,
+        164,100,228,20,148,84,212,52,180,116,244,12,140,76,204,44,172,108,
+        236,28,156,92,220,60,188,124,252,2,130,66,194,34,162,98,226,18,146,
+        82,210,50,178,114,242,10,138,74,202,42,170,106,234,26,154,90,218,58,
+        186,122,250,6,134,70,198,38,166,102,230,22,150,86,214,54,182,118,246,
+        14,142,78,206,46,174,110,238,30,158,94,222,62,190,126,254,1,129,65,
+        193,33,161,97,225,17,145,81,209,49,177,113,241,9,137,73,201,41,169,
+        105,233,25,153,89,217,57,185,121,249,5,133,69,197,37,165,101,229,21,
+        149,85,213,53,181,117,245,13,141,77,205,45,173,109,237,29,157,93,221,
+        61,189,125,253,3,131,67,195,35,163,99,227,19,147,83,211,51,179,115,
+        243,11,139,75,203,43,171,107,235,27,155,91,219,59,187,123,251,7,135,
+        71,199,39,167,103,231,23,151,87,215,55,183,119,247,15,143,79,207,47,
+        175,111,239,31,159,95,223,63,191,127,255
+    ];
+    BACKWARDS[b as usize]
+}
 
 
 #[test]
