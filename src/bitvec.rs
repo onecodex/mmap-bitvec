@@ -38,13 +38,25 @@ impl BitVec {
     ///
     /// The overall size of bit vector (in bits) and a fixed-size header must
     /// also be provided (although the header can be 0-length).
-    pub fn create<P>(filename: P, size: usize, magic: &[u8; 2], header: &[u8]) -> Result<Self, io::Error> where P: AsRef<Path> {
+    pub fn create<P>(
+        filename: P,
+        size: usize,
+        magic: &[u8; 2],
+        header: &[u8],
+    ) -> Result<Self, io::Error>
+    where
+        P: AsRef<Path>,
+    {
         assert!(header.len() < 65_536);
 
         let byte_size = ((size - 1) >> 3) as u64 + 1;
         // if we're creating the file, we need to make sure it's bug enough for our
         // purposes (memmap doesn't automatically size the file)
-        let mut file = OpenOptions::new().read(true).write(true).create(true).open(filename)?;
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(filename)?;
         // two magic bytes, u16 header length, header, u64 bitvec length, bitvec
         let total_header_size = 2 + 2 + header.len() + 8;
         file.set_len(total_header_size as u64 + byte_size)?;
@@ -57,7 +69,12 @@ impl BitVec {
         let serialized_size: [u8; 8] = unsafe { transmute((size as u64).to_be()) };
         file.write_all(&serialized_size)?;
 
-        let mmap = Mmap::open_with_offset(&file, Protection::ReadWrite, total_header_size, byte_size as usize)?;
+        let mmap = Mmap::open_with_offset(
+            &file,
+            Protection::ReadWrite,
+            total_header_size,
+            byte_size as usize,
+        )?;
         Ok(BitVec {
             mmap: mmap,
             size: size,
@@ -72,7 +89,10 @@ impl BitVec {
     /// The header_size must be specified (as it isn't stored in the file to
     /// allow the magic bytes to be set) and there is an optional read_only
     /// property that will lock the underlying mmap from writing.
-    pub fn open<P>(filename: P, magic: Option<&[u8; 2]>, read_only: bool) -> Result<Self, io::Error> where P: AsRef<Path> {
+    pub fn open<P>(filename: P, magic: Option<&[u8; 2]>, read_only: bool) -> Result<Self, io::Error>
+    where
+        P: AsRef<Path>,
+    {
         let (mut file, protection) = if read_only {
             let f = OpenOptions::new().read(true).open(filename)?;
             (f, Protection::Read)
@@ -86,16 +106,18 @@ impl BitVec {
         file.read_exact(&mut file_magic)?;
         if let Some(m) = magic {
             if &file_magic != m {
-                return Err(io::Error::new(io::ErrorKind::InvalidData, "file not long enough"));
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "file not long enough",
+                ));
             }
         }
 
         // read the header size and the header
         let mut serialized_header_size = [0; 2];
         file.read_exact(&mut serialized_header_size)?;
-        let header_size: usize = u16::from_be(unsafe {
-            transmute(serialized_header_size)
-        }) as usize;
+        let header_size: usize = u16::from_be(unsafe { transmute(serialized_header_size) }) as
+            usize;
         let mut header = vec![0; header_size];
         file.read_exact(&mut header)?;
 
@@ -107,12 +129,15 @@ impl BitVec {
         let total_header_size = 2 + 2 + header_size + 8;
         let byte_size = ((size - 1) >> 3) + 1;
         if file.metadata()?.len() != total_header_size as u64 + byte_size {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "file not long enough"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "file not long enough",
+            ));
         }
 
         // load the mmap itself and return the whole shebang
-        let mmap = Mmap::open_with_offset(&file, protection, total_header_size,
-                                          byte_size as usize)?;
+        let mmap =
+            Mmap::open_with_offset(&file, protection, total_header_size, byte_size as usize)?;
         Ok(BitVec {
             mmap: mmap,
             size: size as usize,
@@ -123,12 +148,14 @@ impl BitVec {
     /// Opens a BitVec file that doesn't have our "standard" file header format
     ///
     ///  Useful for opening legacy bitvec formats.
-    pub fn open_no_header<P>(filename: P, offset: usize) -> Result<Self, io::Error> where P: AsRef<Path> {
+    pub fn open_no_header<P>(filename: P, offset: usize) -> Result<Self, io::Error>
+    where
+        P: AsRef<Path>,
+    {
         let file_size = metadata(&filename)?.len() as usize;
         let byte_size = file_size - offset;
         let f = OpenOptions::new().read(true).open(&filename)?;
-        let mmap = Mmap::open_with_offset(&f, Protection::Read, offset,
-                                          byte_size as usize)?;
+        let mmap = Mmap::open_with_offset(&f, Protection::Read, offset, byte_size as usize)?;
 
         Ok(BitVec {
             mmap: mmap,
@@ -141,7 +168,7 @@ impl BitVec {
     ///
     /// Note that unlike the `create` and `open` no header is set.
     /// The BitVec is also read/write by default.
-    pub fn from_memory(size: usize)  -> Result<Self, io::Error> {
+    pub fn from_memory(size: usize) -> Result<Self, io::Error> {
         let byte_size = ((size - 1) >> 3) as u64 + 1;
         let mmap = Mmap::anonymous(byte_size as usize, Protection::ReadWrite)?;
         Ok(BitVec {
@@ -172,11 +199,9 @@ impl BitVec {
         }
         let byte_idx = (i >> 3) as isize;
         let bit_idx = 7 - (i & 7) as u8;
-        
+
         let mmap: *const u8 = self.mmap.ptr();
-        unsafe {
-            (*mmap.offset(byte_idx) & (1 << bit_idx)) != 0
-        }
+        unsafe { (*mmap.offset(byte_idx) & (1 << bit_idx)) != 0 }
     }
 
     /// Read/copy an unaligned chunk of the BitVec
@@ -198,11 +223,9 @@ impl BitVec {
         let mut v = vec![0; new_size];
 
         // `shift` is the same as the position of the last bit
-        let shift = (r.end & 7) as u8; 
+        let shift = (r.end & 7) as u8;
         for (new_idx, old_idx) in (byte_idx_st..byte_idx_en + 1).enumerate() {
-            let old_val = unsafe {
-                *ptr.offset(old_idx as isize)
-            };
+            let old_val = unsafe { *ptr.offset(old_idx as isize) };
             if new_idx > 0 {
                 if let Some(shifted_val) = old_val.checked_shr(u32::from(shift)) {
                     v[new_idx - 1] |= shifted_val;
@@ -210,7 +233,7 @@ impl BitVec {
             }
             if new_idx < new_size {
                 v[new_idx] |= (old_val & (0xFF >> shift)) << shift;
-            } 
+            }
         }
         v
     }
@@ -232,7 +255,7 @@ impl BitVec {
         let byte_idx_st = (r.start >> 3) as usize;
         let byte_idx_en = ((r.end - 1) >> 3) as usize;
         let new_size: u8 = (r.end - r.start) as u8;
-        
+
         let mut v;
         let ptr: *const u8 = self.mmap.ptr();
 
@@ -250,7 +273,8 @@ impl BitVec {
         // this for now and we can add a special case for that later
         for (new_idx, old_idx) in (byte_idx_st..byte_idx_en).enumerate() {
             unsafe {
-                v |= BitVecSlice::from(*ptr.offset(old_idx as isize)) << (bit_offset - 8u8 * (new_idx as u8 + 1));
+                v |= BitVecSlice::from(*ptr.offset(old_idx as isize)) <<
+                    (bit_offset - 8u8 * (new_idx as u8 + 1));
             }
         }
 
@@ -297,7 +321,7 @@ impl BitVec {
         if ((new_size - 1) >> 3) + 1 != x.len() {
             panic!("Range and array passed are different sizes")
         }
-        // we basically ignore r.start except for checking that it roughly 
+        // we basically ignore r.start except for checking that it roughly
         // matches up with the size of the byte slice. this works because
         // we're ORing the bits together, so any extra zeros at the front
         // of the first byte in x shouldn't affect the final result at all
@@ -311,11 +335,11 @@ impl BitVec {
 
         let mmap: *mut u8 = self.mmap.mut_ptr();
 
-        let shift = 8 - (r.end & 7) as u8; 
+        let shift = 8 - (r.end & 7) as u8;
         let mask = 0xFFu8.checked_shr(u32::from(8 - shift)).unwrap_or(0xFF);
         for (val, idx) in x.iter().zip(byte_idx_st..byte_idx_en + 1) {
             let shifted_val = val.checked_shr(u32::from(8 - shift)).unwrap_or(0);
-            if idx > 0 && shift != 8{
+            if idx > 0 && shift != 8 {
                 unsafe {
                     *mmap.offset(idx as isize - 1) |= shifted_val;
                 }
@@ -367,7 +391,7 @@ impl BitVec {
         // set the last byte (also a "partial" byte like the first
         let mut size_back = (r.end & 7) as u8;
         if size_back == 0 {
-             size_back = 8;
+            size_back = 8;
         }
         let back_byte = (x << (BIT_VEC_SLICE_SIZE - size_back) >> (BIT_VEC_SLICE_SIZE - 8)) as u8;
         unsafe {
@@ -406,7 +430,7 @@ impl BitVec {
     /// of the bit vector. A panic may also occur if r.start is greater than
     /// r.end.
     pub fn clear_range(&mut self, r: Range<usize>) {
-       if (r.end - 1) > self.size {
+        if (r.end - 1) > self.size {
             panic!("Range ends outside of BitVec")
         }
         let byte_idx_st = (r.start >> 3) as usize;
@@ -431,7 +455,7 @@ impl BitVec {
         // set the last byte (also a "partial" byte like the first
         let mut size_back = (r.end & 7) as u8;
         if size_back == 0 {
-             size_back = 8;
+            size_back = 8;
         }
         if let Some(mask) = 0xFFu8.checked_shr(u32::from(size_back)) {
             unsafe {
@@ -524,10 +548,22 @@ fn test_bitvec_get_range() {
     b.set(5, true);
     assert_eq!(b.get_range(0..8), 52, "indexing within a single byte");
     assert_eq!(b.get_range(0..16), 13312, "indexing multiple bytes");
-    assert_eq!(b.get_range(0..64), 3_746_994_889_972_252_672, "indexing the maximum # of bytes");
-    assert_eq!(b.get_range(64..128), 0, "indexing the maximum # of bytes to the end");
+    assert_eq!(
+        b.get_range(0..64),
+        3_746_994_889_972_252_672,
+        "indexing the maximum # of bytes"
+    );
+    assert_eq!(
+        b.get_range(64..128),
+        0,
+        "indexing the maximum # of bytes to the end"
+    );
     assert_eq!(b.get_range(2..10), 208, "indexing across bytes");
-    assert_eq!(b.get_range(2..66), 14_987_979_559_889_010_688, "indexing the maximum # of bytes across bytes");
+    assert_eq!(
+        b.get_range(2..66),
+        14_987_979_559_889_010_688,
+        "indexing the maximum # of bytes across bytes"
+    );
     assert_eq!(b.get_range(115..128), 0, "indexing across bytes to the end");
 }
 
@@ -537,13 +573,37 @@ fn test_bitvec_get_range_bytes() {
     b.set(2, true);
     b.set(3, true);
     b.set(5, true);
-    assert_eq!(b.get_range_bytes(0..8), &[0x34], "indexing within a single byte");
-    assert_eq!(b.get_range_bytes(0..16), &[0x34, 0x00], "indexing multiple bytes");
-    assert_eq!(b.get_range_bytes(0..64), &[0x34, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00], "indexing the maximum # of bytes");
-    assert_eq!(b.get_range_bytes(64..128), &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00], "indexing the maximum # of bytes to the end");
+    assert_eq!(
+        b.get_range_bytes(0..8),
+        &[0x34],
+        "indexing within a single byte"
+    );
+    assert_eq!(
+        b.get_range_bytes(0..16),
+        &[0x34, 0x00],
+        "indexing multiple bytes"
+    );
+    assert_eq!(
+        b.get_range_bytes(0..64),
+        &[0x34, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+        "indexing the maximum # of bytes"
+    );
+    assert_eq!(
+        b.get_range_bytes(64..128),
+        &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+        "indexing the maximum # of bytes to the end"
+    );
     assert_eq!(b.get_range_bytes(2..10), &[0xD0], "indexing across bytes");
-    assert_eq!(b.get_range_bytes(2..66), &[0xD0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00], "indexing the maximum # of bytes across bytes");
-    assert_eq!(b.get_range_bytes(115..128), &[0x00, 0x00], "indexing across bytes to the end");
+    assert_eq!(
+        b.get_range_bytes(2..66),
+        &[0xD0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+        "indexing the maximum # of bytes across bytes"
+    );
+    assert_eq!(
+        b.get_range_bytes(115..128),
+        &[0x00, 0x00],
+        "indexing across bytes to the end"
+    );
 }
 
 #[test]
