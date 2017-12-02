@@ -4,7 +4,8 @@ use std::path::Path;
 
 use murmurhash3::murmurhash3_x64_128;
 
-use bitvec::BitVec;
+use mmap_bitvec::MmapBitVec;
+use bitvec::BitVector;
 
 // we don't want to use murmurhash3::Murmur3Hasher b/c it makes copies of the
 // bytes to be hashed with every single `hash` call
@@ -35,7 +36,7 @@ impl Hasher for MurmurHasher {
 
 /// A simple implementation of a Bloom filter backed by `BitVec`
 pub struct BloomFilter {
-    bit_vec: BitVec,
+    bit_vec: MmapBitVec,
     hashes: u8,
 }
 
@@ -52,12 +53,12 @@ impl BloomFilter {
         let bitvec = match filename {
             Some(filename) => {
                 if Path::exists(filename.as_ref()) {
-                    BitVec::open(&filename, Some(b"!!"), false)?
+                    MmapBitVec::open(&filename, Some(b"!!"), false)?
                 } else {
-                    BitVec::create(&filename, bits, b"!!", &header)?
+                    MmapBitVec::create(&filename, bits, b"!!", &header)?
                 }
             }
-            None => BitVec::from_memory(bits)?,
+            None => MmapBitVec::from_memory(bits)?,
         };
         Ok(BloomFilter {
             bit_vec: bitvec,

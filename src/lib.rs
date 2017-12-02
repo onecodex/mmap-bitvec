@@ -8,8 +8,11 @@ extern crate murmurhash3;
 
 pub mod bitvec;
 pub mod bloom;
+pub mod mmap_bitvec;
 
 #[doc(inline)]
-pub use bitvec::{BitVec, BitVecSlice, BIT_VEC_SLICE_SIZE};
+pub use bitvec::{BitVector, BitVecSlice, BIT_VEC_SLICE_SIZE};
+#[doc(inline)]
+pub use mmap_bitvec::MmapBitVec;
 #[doc(inline)]
 pub use bloom::BloomFilter;
