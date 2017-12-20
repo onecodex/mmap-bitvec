@@ -5,7 +5,7 @@ use std::mem::transmute;
 use std::ops::Range;
 use std::path::Path;
 
-use memmap::{Mmap, Protection};
+use memmap::{MmapOptions, MmapMut};
 
 use bitvec::{BIT_VEC_SLICE_SIZE, BitVecSlice, BitVector};
 
@@ -21,7 +21,7 @@ use bitvec::{BIT_VEC_SLICE_SIZE, BitVecSlice, BitVector};
 /// assert_eq!(bv.get_range(2..12), 0b1001101101);
 /// ```
 pub struct MmapBitVec {
-    mmap: Mmap,
+    mmap: MmapMut,
     size: usize,
     header: Box<[u8]>,
 }
@@ -40,7 +40,7 @@ impl MmapBitVec {
     where
         P: AsRef<Path>,
     {
-        assert!(header.len() < 65_536);
+        assert!(header.len() < 65_536, "Headers longer than 65636 bytes not supported");
 
         let byte_size = ((size - 1) >> 3) as u64 + 1;
         // if we're creating the file, we need to make sure it's bug enough for our
@@ -62,12 +62,9 @@ impl MmapBitVec {
         let serialized_size: [u8; 8] = unsafe { transmute((size as u64).to_be()) };
         file.write_all(&serialized_size)?;
 
-        let mmap = Mmap::open_with_offset(
-            &file,
-            Protection::ReadWrite,
-            total_header_size,
-            byte_size as usize,
-        )?;
+        let mmap = unsafe {
+            MmapOptions::new().offset(total_header_size).map_mut(&file)
+        }?;
         Ok(MmapBitVec {
             mmap: mmap,
             size: size,
@@ -82,17 +79,13 @@ impl MmapBitVec {
     /// The header_size must be specified (as it isn't stored in the file to
     /// allow the magic bytes to be set) and there is an optional read_only
     /// property that will lock the underlying mmap from writing.
-    pub fn open<P>(filename: P, magic: Option<&[u8; 2]>, read_only: bool) -> Result<Self, io::Error>
+    pub fn open<P>(filename: P, magic: Option<&[u8; 2]>, readonly: bool) -> Result<Self, io::Error>
     where
         P: AsRef<Path>,
     {
-        let (mut file, protection) = if read_only {
-            let f = OpenOptions::new().read(true).open(filename)?;
-            (f, Protection::Read)
-        } else {
-            let f = OpenOptions::new().read(true).write(true).open(filename)?;
-            (f, Protection::ReadWrite)
-        };
+        // TODO: at some point remove `readonly` from the interface (since we use
+        // MmapMut for everything)
+        let mut file = OpenOptions::new().read(true).write(true).open(filename)?;
 
         // read the magic bytes and (optionally) check if it matches
         let mut file_magic = [0; 2];
@@ -129,8 +122,10 @@ impl MmapBitVec {
         }
 
         // load the mmap itself and return the whole shebang
-        let mmap =
-            Mmap::open_with_offset(&file, protection, total_header_size, byte_size as usize)?;
+        let mmap = unsafe {
+            MmapOptions::new().offset(total_header_size).map_mut(&file)
+        }?;
+
         Ok(MmapBitVec {
             mmap: mmap,
             size: size as usize,
@@ -147,8 +142,10 @@ impl MmapBitVec {
     {
         let file_size = metadata(&filename)?.len() as usize;
         let byte_size = file_size - offset;
-        let f = OpenOptions::new().read(true).open(&filename)?;
-        let mmap = Mmap::open_with_offset(&f, Protection::Read, offset, byte_size as usize)?;
+        let f = OpenOptions::new().read(true).write(true).open(&filename)?;
+        let mmap = unsafe {
+            MmapOptions::new().offset(offset).map_mut(&f)
+        }?;
 
         Ok(MmapBitVec {
             mmap: mmap,
@@ -163,7 +160,7 @@ impl MmapBitVec {
     /// The MmapBitVec is also read/write by default.
     pub fn from_memory(size: usize) -> Result<Self, io::Error> {
         let byte_size = ((size - 1) >> 3) as u64 + 1;
-        let mmap = Mmap::anonymous(byte_size as usize, Protection::ReadWrite)?;
+        let mmap = MmapOptions::new().len(byte_size as usize).map_anon()?;
         Ok(MmapBitVec {
             mmap: mmap,
             size: size,
@@ -191,7 +188,7 @@ impl MmapBitVec {
         let byte_idx_en = ((r.end - 1) >> 3) as usize;
         let new_size: usize = (((r.end - r.start) as usize - 1) >> 3) + 1;
 
-        let ptr: *const u8 = self.mmap.ptr();
+        let ptr: *const u8 = self.mmap.as_ptr();
         let mut v = vec![0; new_size];
 
         // `shift` is the same as the position of the last bit
@@ -240,7 +237,7 @@ impl MmapBitVec {
         };
         let byte_idx_en = ((r.end - 1) >> 3) as usize;
 
-        let mmap: *mut u8 = self.mmap.mut_ptr();
+        let mmap: *mut u8 = self.mmap.as_mut_ptr();
 
         let shift = 8 - (r.end & 7) as u8;
         let mask = 0xFFu8.checked_shr(u32::from(8 - shift)).unwrap_or(0xFF);
@@ -280,7 +277,7 @@ impl BitVector for MmapBitVec {
         #[cfg(feature = "backward_bytes")]
         let bit_idx = (i & 7) as u8;
 
-        let mmap: *const u8 = self.mmap.ptr();
+        let mmap: *const u8 = self.mmap.as_ptr();
         unsafe { (*mmap.offset(byte_idx) & (1 << bit_idx)) != 0 }
     }
 
@@ -303,7 +300,7 @@ impl BitVector for MmapBitVec {
         let new_size: u8 = (r.end - r.start) as u8;
 
         let mut v;
-        let ptr: *const u8 = self.mmap.ptr();
+        let ptr: *const u8 = self.mmap.as_ptr();
 
         // read the last byte first
         unsafe {
@@ -343,7 +340,7 @@ impl BitVector for MmapBitVec {
         #[cfg(feature = "backward_bytes")]
         let bit_idx = (i & 7) as u8;
 
-        let mmap: *mut u8 = self.mmap.mut_ptr();
+        let mmap: *mut u8 = self.mmap.as_mut_ptr();
         unsafe {
             if x {
                 *mmap.offset(byte_idx) |= 1 << bit_idx
@@ -380,7 +377,7 @@ impl BitVector for MmapBitVec {
 
         // set front with an AND mask to make sure this all the 0's in the
         // new value get masked over the existing 1's
-        let mmap: *mut u8 = self.mmap.mut_ptr();
+        let mmap: *mut u8 = self.mmap.as_mut_ptr();
         unsafe {
             *mmap.offset(byte_idx_st as isize) |= order_byte(front_byte);
         }
@@ -438,7 +435,7 @@ impl BitVector for MmapBitVec {
         let byte_idx_st = (r.start >> 3) as usize;
         let byte_idx_en = ((r.end - 1) >> 3) as usize;
 
-        let mmap: *mut u8 = self.mmap.mut_ptr();
+        let mmap: *mut u8 = self.mmap.as_mut_ptr();
 
         // set front with an AND mask to make sure this all the 0's in the
         // new value get masked over the existing 1's
@@ -481,7 +478,7 @@ impl BitVector for MmapBitVec {
     fn rank(&self, r: Range<usize>) -> usize {
         let byte_idx_st = (r.start >> 3) as usize;
         let byte_idx_en = ((r.end - 1) >> 3) as usize;
-        let mmap: *const u8 = self.mmap.ptr();
+        let mmap: *const u8 = self.mmap.as_ptr();
 
         let mut bit_count = 0usize;
 
@@ -529,7 +526,7 @@ impl BitVector for MmapBitVec {
     fn select(&self, n: usize, start: usize) -> Option<usize> {
         let byte_idx_st = (start >> 3) as usize;
         let size_front = 8u8 - (start & 7) as u8;
-        let mmap: *const u8 = self.mmap.ptr();
+        let mmap: *const u8 = self.mmap.as_ptr();
 
         let mut rank_count = 0usize;
         for byte_idx in byte_idx_st.. {
@@ -565,25 +562,6 @@ impl Drop for MmapBitVec {
         let _ = self.mmap.flush();
     }
 }
-
-// In addition to being slower than the `get` method itself, the below is
-// essentially useless as we don't have an equivalent "setter" method.
-// See issue #1 for more details as to why.
-//
-// impl Index<usize> for BitVec {
-//     // fairly hacky; it would be nice to have Index<Range>, IndexMut<usize>,
-//     // and IndexMut<Range> methods too, but since these have to return
-//     // references that's a little tricky
-//     type Output = bool;
-//     fn index(&self, idx: usize) -> &Self::Output {
-//         const TRUE: &'static bool = &true;
-//         const FALSE: &'static bool = &false;
-//         match self.get(idx) {
-//             true => TRUE,
-//             false => FALSE,
-//         }
-//     }
-// }
 
 #[inline]
 #[cfg(not(feature = "backward_bytes"))]
