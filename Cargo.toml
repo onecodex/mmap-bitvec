@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["Roderick Bovee <roderick@onecodex.com>"]
 
 [dependencies]
-memmap = "0.5.2"
+memmap = "0.6.1"
 murmurhash3 = "0.0.5"
 
 [features]
