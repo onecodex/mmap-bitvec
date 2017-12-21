@@ -181,7 +181,7 @@ impl MmapBitVec {
     /// of the bit vector. A panic may also occur if r.start is greater than
     /// r.end.
     pub fn get_range_bytes(&self, r: Range<usize>) -> Vec<u8> {
-        if (r.end - 1) > self.size {
+        if r.end > self.size {
             panic!("Range ends outside of BitVec")
         }
         let byte_idx_st = (r.start >> 3) as usize;
@@ -218,7 +218,7 @@ impl MmapBitVec {
     /// from the range specified. A panic may also occur if r.start is greater
     /// than r.end.
     pub fn set_range_bytes(&mut self, r: Range<usize>, x: &[u8]) {
-        if (r.end - 1) > self.size {
+        if r.end > self.size {
             panic!("Range ends outside of BitVec")
         }
         let new_size: usize = r.end - r.start;
@@ -292,7 +292,7 @@ impl BitVector for MmapBitVec {
     fn get_range(&self, r: Range<usize>) -> BitVecSlice {
         if r.end - r.start > BIT_VEC_SLICE_SIZE as usize {
             panic!(format!("Range too large (>{})", BIT_VEC_SLICE_SIZE))
-        } else if (r.end - 1) > self.size {
+        } else if r.end > self.size {
             panic!("Range ends outside of BitVec")
         }
         let byte_idx_st = (r.start >> 3) as usize;
@@ -360,7 +360,7 @@ impl BitVector for MmapBitVec {
     /// of the bit vector. A panic may also occur if r.start is greater than
     /// r.end.
     fn set_range(&mut self, r: Range<usize>, x: BitVecSlice) {
-        if (r.end - 1) > self.size {
+        if r.end > self.size {
             panic!("Range ends outside of BitVec")
         }
         let byte_idx_st = (r.start >> 3) as usize;
@@ -702,6 +702,8 @@ fn test_bitvec_set_range() {
     assert_eq!(b.get_range(0..4), 0b0101);
     b.set_range(5..8, 0b0101);
     assert_eq!(b.get_range(5..8), 0b0101);
+    b.set_range(123..127, 0b0101);
+    assert_eq!(b.get_range(123..127), 0b0101);
 
     // test across a byte boundary
     b.set_range(6..9, 0b111);
