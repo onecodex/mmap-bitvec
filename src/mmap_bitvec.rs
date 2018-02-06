@@ -21,8 +21,8 @@ use bitvec::{BIT_VEC_SLICE_SIZE, BitVecSlice, BitVector};
 /// assert_eq!(bv.get_range(2..12), 0b1001101101);
 /// ```
 pub struct MmapBitVec {
-    mmap: MmapMut,
-    size: usize,
+    pub mmap: MmapMut,
+    pub size: usize,
     header: Box<[u8]>,
 }
 
