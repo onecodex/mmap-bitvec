@@ -21,8 +21,8 @@ use bitvec::{BIT_VEC_SLICE_SIZE, BitVecSlice, BitVector};
 /// assert_eq!(bv.get_range(2..12), 0b1001101101);
 /// ```
 pub struct MmapBitVec {
-    mmap: MmapMut,
-    size: usize,
+    pub mmap: MmapMut,
+    pub size: usize,
     header: Box<[u8]>,
 }
 
@@ -309,27 +309,20 @@ impl BitVector for MmapBitVec {
         // align the end of the data with the end of the u64/u128
         v >>= 7 - ((r.end - 1) & 7);
 
-
-        if r.start < self.size - BIT_VEC_SLICE_SIZE as usize && cfg!(not(feature = "backward_bytes")) {
-            // really nasty/unsafe, but we're just reading a u64/u128 out instead of doing it
-            // byte-wise --- also does not work with legacy mode!!!
+        let bit_offset = new_size + (r.start & 7) as u8;
+        // copy over byte by byte
+        // it would be faster to coerce into a u8 and a u64 (in case it spans 9 bytes) and then
+        // copy over, but this doesn't work if the start is <8 bytes from the end, so we're doing
+        // this for now and we can add a special case for that later
+        for (new_idx, old_idx) in (byte_idx_st..byte_idx_en).enumerate() {
             unsafe {
-                let lg_ptr: *const BitVecSlice = transmute(ptr.offset(byte_idx_st as isize));
-                v |= (*lg_ptr).to_be() << (r.start & 7) >> (BIT_VEC_SLICE_SIZE - new_size);
-            }
-        } else {
-            // special case if we can't get a whole u64 out without running outside the buffer
-            let bit_offset = new_size + (r.start & 7) as u8;
-            for (new_idx, old_idx) in (byte_idx_st..byte_idx_en).enumerate() {
-                unsafe {
-                    v |= BitVecSlice::from(order_byte(*ptr.offset(old_idx as isize))) <<
-                        (bit_offset - 8u8 * (new_idx as u8 + 1));
-                }
+                v |= BitVecSlice::from(order_byte(*ptr.offset(old_idx as isize))) <<
+                    (bit_offset - 8u8 * (new_idx as u8 + 1));
             }
         }
 
         // mask out the high bits in case we copied extra
-        v & (BitVecSlice::max_value() >> (BIT_VEC_SLICE_SIZE - new_size))
+        v & BitVecSlice::max_value() >> (BIT_VEC_SLICE_SIZE - new_size)
     }
 
     /// Set a single bit in the bit vector
