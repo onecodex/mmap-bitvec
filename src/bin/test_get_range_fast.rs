@@ -1,13 +1,12 @@
-extern crate mmap_bitvec;
 extern crate memmap;
+extern crate mmap_bitvec;
 
-use std::fs::OpenOptions;
 use std::env::args;
 use std::mem::transmute;
 use std::ops::Range;
 
-use mmap_bitvec::{MmapBitVec, BitVector};
-use memmap::{MmapOptions, MmapMut};
+use memmap::MmapMut;
+use mmap_bitvec::{BitVector, MmapBitVec};
 
 // we could use an RNG, but I want to make sure everything is
 // as comparable as possible
@@ -20,10 +19,8 @@ fn next_random(n: usize) -> usize {
     x as usize
 }
 
-
 type BitVecSlice = u64;
 const BIT_VEC_SLICE_SIZE: u8 = 64;
-
 
 fn get_range(mmap: &MmapMut, size: usize, r: Range<usize>) -> BitVecSlice {
     if r.end - r.start > BIT_VEC_SLICE_SIZE as usize {
@@ -40,17 +37,17 @@ fn get_range(mmap: &MmapMut, size: usize, r: Range<usize>) -> BitVecSlice {
 
     // read the last byte first
     unsafe {
-        v = BitVecSlice::from(*ptr.offset(byte_idx_en as isize));
+        v = BitVecSlice::from(*ptr.add(byte_idx_en));
     }
     // align the end of the data with the end of the u64/u128
     v >>= 7 - ((r.end - 1) & 7);
-
 
     if r.start < size - BIT_VEC_SLICE_SIZE as usize {
         // really nasty/unsafe, but we're just reading a u64/u128 out instead of doing it
         // byte-wise --- also does not work with legacy mode!!!
         unsafe {
-            let lg_ptr: *const BitVecSlice = transmute(ptr.offset(byte_idx_st as isize));
+            #[allow(clippy::transmute_ptr_to_ptr)]
+            let lg_ptr: *const BitVecSlice = transmute(ptr.add(byte_idx_st));
             v |= (*lg_ptr).to_be() << (r.start & 7) >> (BIT_VEC_SLICE_SIZE - new_size);
         }
     } else {
@@ -58,8 +55,8 @@ fn get_range(mmap: &MmapMut, size: usize, r: Range<usize>) -> BitVecSlice {
         let bit_offset = new_size + (r.start & 7) as u8;
         for (new_idx, old_idx) in (byte_idx_st..byte_idx_en).enumerate() {
             unsafe {
-                v |= BitVecSlice::from(*ptr.offset(old_idx as isize)) <<
-                    (bit_offset - 8u8 * (new_idx as u8 + 1));
+                v |= BitVecSlice::from(*ptr.add(old_idx))
+                    << (bit_offset - 8u8 * (new_idx as u8 + 1));
             }
         }
     }
@@ -68,10 +65,13 @@ fn get_range(mmap: &MmapMut, size: usize, r: Range<usize>) -> BitVecSlice {
     v & (BitVecSlice::max_value() >> (BIT_VEC_SLICE_SIZE - new_size))
 }
 
-
 fn main() {
     let filename = args().nth(1).expect("need [filename] [n_samples]");
-    let n_samples = args().nth(2).expect("need [n_samples]").parse::<usize>().expect("n_samples must be an integer");
+    let n_samples = args()
+        .nth(2)
+        .expect("need [n_samples]")
+        .parse::<usize>()
+        .expect("n_samples must be an integer");
 
     // let file = OpenOptions::new().read(true).write(true).open(filename).unwrap();
     // let size = (8 * file.metadata().unwrap().len()) as usize;
@@ -86,7 +86,7 @@ fn main() {
     let mut i = 1;
     for _ in 0..n_samples {
         let l = i % (size - 64);
-        r += get_range(&bitvec.mmap, size, l..l+64).count_ones();
+        r += get_range(&bitvec.mmap, size, l..l + 64).count_ones();
         i = next_random(i);
     }
     println!("{}", r);

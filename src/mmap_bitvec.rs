@@ -5,9 +5,9 @@ use std::mem::transmute;
 use std::ops::Range;
 use std::path::Path;
 
-use memmap::{MmapOptions, MmapMut};
+use memmap::{MmapMut, MmapOptions};
 
-use bitvec::{BIT_VEC_SLICE_SIZE, BitVecSlice, BitVector};
+use bitvec::{BitVecSlice, BitVector, BIT_VEC_SLICE_SIZE};
 
 /// Bit vector backed by a mmap-ed file
 ///
@@ -34,13 +34,16 @@ impl MmapBitVec {
     pub fn create<P>(
         filename: P,
         size: usize,
-        magic: &[u8; 2],
+        magic: [u8; 2],
         header: &[u8],
     ) -> Result<Self, io::Error>
     where
         P: AsRef<Path>,
     {
-        assert!(header.len() < 65_536, "Headers longer than 65636 bytes not supported");
+        assert!(
+            header.len() < 65_536,
+            "Headers longer than 65636 bytes not supported"
+        );
 
         let byte_size = ((size - 1) >> 3) as u64 + 1;
         // if we're creating the file, we need to make sure it's bug enough for our
@@ -55,19 +58,17 @@ impl MmapBitVec {
         file.set_len(total_header_size as u64 + byte_size)?;
         // file.seek(io::SeekFrom::Start(0))?;
 
-        file.write_all(magic)?;
+        file.write_all(&magic)?;
         let serialized_header_size: [u8; 2] = unsafe { transmute((header.len() as u16).to_be()) };
         file.write_all(&serialized_header_size)?;
         file.write_all(header)?;
         let serialized_size: [u8; 8] = unsafe { transmute((size as u64).to_be()) };
         file.write_all(&serialized_size)?;
 
-        let mmap = unsafe {
-            MmapOptions::new().offset(total_header_size).map_mut(&file)
-        }?;
+        let mmap = unsafe { MmapOptions::new().offset(total_header_size).map_mut(&file) }?;
         Ok(MmapBitVec {
-            mmap: mmap,
-            size: size,
+            mmap,
+            size,
             header: header.to_vec().into_boxed_slice(),
         })
     }
@@ -106,8 +107,8 @@ impl MmapBitVec {
         // read the header size and the header
         let mut serialized_header_size = [0; 2];
         file.read_exact(&mut serialized_header_size)?;
-        let header_size: usize = u16::from_be(unsafe { transmute(serialized_header_size) }) as
-            usize;
+        let header_size: usize =
+            u16::from_be(unsafe { transmute(serialized_header_size) }) as usize;
         let mut header = vec![0; header_size];
         file.read_exact(&mut header)?;
 
@@ -131,12 +132,10 @@ impl MmapBitVec {
         }
 
         // load the mmap itself and return the whole shebang
-        let mmap = unsafe {
-            MmapOptions::new().offset(total_header_size).map_mut(&file)
-        }?;
+        let mmap = unsafe { MmapOptions::new().offset(total_header_size).map_mut(&file) }?;
 
         Ok(MmapBitVec {
-            mmap: mmap,
+            mmap,
             size: size as usize,
             header: header.into_boxed_slice(),
         })
@@ -152,12 +151,10 @@ impl MmapBitVec {
         let file_size = metadata(&filename)?.len() as usize;
         let byte_size = file_size - offset;
         let f = OpenOptions::new().read(true).write(true).open(&filename)?;
-        let mmap = unsafe {
-            MmapOptions::new().offset(offset).map_mut(&f)
-        }?;
+        let mmap = unsafe { MmapOptions::new().offset(offset).map_mut(&f) }?;
 
         Ok(MmapBitVec {
-            mmap: mmap,
+            mmap,
             size: byte_size * 8,
             header: Box::new([]),
         })
@@ -171,8 +168,8 @@ impl MmapBitVec {
         let byte_size = ((size - 1) >> 3) as u64 + 1;
         let mmap = MmapOptions::new().len(byte_size as usize).map_anon()?;
         Ok(MmapBitVec {
-            mmap: mmap,
-            size: size,
+            mmap,
+            size,
             header: vec![].into_boxed_slice(),
         })
     }
@@ -202,8 +199,8 @@ impl MmapBitVec {
 
         // `shift` is the same as the position of the last bit
         let shift = (r.end & 7) as u8;
-        for (new_idx, old_idx) in (byte_idx_st..byte_idx_en + 1).enumerate() {
-            let old_val = unsafe { order_byte(*ptr.offset(old_idx as isize)) };
+        for (new_idx, old_idx) in (byte_idx_st..=byte_idx_en).enumerate() {
+            let old_val = unsafe { order_byte(*ptr.add(old_idx)) };
             if new_idx > 0 {
                 if let Some(shifted_val) = old_val.checked_shr(u32::from(shift)) {
                     v[new_idx - 1] |= shifted_val;
@@ -250,7 +247,7 @@ impl MmapBitVec {
 
         let shift = 8 - (r.end & 7) as u8;
         let mask = 0xFFu8.checked_shr(u32::from(8 - shift)).unwrap_or(0xFF);
-        for (val, idx) in x.iter().zip(byte_idx_st..byte_idx_en + 1) {
+        for (val, idx) in x.iter().zip(byte_idx_st..=byte_idx_en) {
             let shifted_val = val.checked_shr(u32::from(8 - shift)).unwrap_or(0);
             if idx > 0 && shift != 8 {
                 unsafe {
@@ -259,7 +256,7 @@ impl MmapBitVec {
             }
             let shifted_val = (val & mask).checked_shl(u32::from(shift)).unwrap_or(*val);
             unsafe {
-                *mmap.offset(idx as isize) |= order_byte(shifted_val);
+                *mmap.add(idx) |= order_byte(shifted_val);
             }
         }
     }
@@ -313,17 +310,20 @@ impl BitVector for MmapBitVec {
 
         // read the last byte first
         unsafe {
-            v = BitVecSlice::from(order_byte(*ptr.offset(byte_idx_en as isize)));
+            v = BitVecSlice::from(order_byte(*ptr.add(byte_idx_en)));
         }
         // align the end of the data with the end of the u64/u128
         v >>= 7 - ((r.end - 1) & 7);
 
-
-        if r.start < self.size - BIT_VEC_SLICE_SIZE as usize && cfg!(not(feature = "backward_bytes")) {
+        if r.start < self.size - BIT_VEC_SLICE_SIZE as usize
+            && cfg!(not(feature = "backward_bytes"))
+        {
             // really nasty/unsafe, but we're just reading a u64/u128 out instead of doing it
             // byte-wise --- also does not work with legacy mode!!!
             unsafe {
-                let lg_ptr: *const BitVecSlice = transmute(ptr.offset(byte_idx_st as isize));
+                // we have to transmute since we don't know if it's a u64 or u128
+                #[allow(clippy::transmute_ptr_to_ptr)]
+                let lg_ptr: *const BitVecSlice = transmute(ptr.add(byte_idx_st));
                 v |= (*lg_ptr).to_be() << (r.start & 7) >> (BIT_VEC_SLICE_SIZE - new_size);
             }
         } else {
@@ -331,8 +331,8 @@ impl BitVector for MmapBitVec {
             let bit_offset = new_size + (r.start & 7) as u8;
             for (new_idx, old_idx) in (byte_idx_st..byte_idx_en).enumerate() {
                 unsafe {
-                    v |= BitVecSlice::from(order_byte(*ptr.offset(old_idx as isize))) <<
-                        (bit_offset - 8u8 * (new_idx as u8 + 1));
+                    v |= BitVecSlice::from(order_byte(*ptr.add(old_idx)))
+                        << (bit_offset - 8u8 * (new_idx as u8 + 1));
                 }
             }
         }
@@ -395,7 +395,7 @@ impl BitVector for MmapBitVec {
         // new value get masked over the existing 1's
         let mmap: *mut u8 = self.mmap.as_mut_ptr();
         unsafe {
-            *mmap.offset(byte_idx_st as isize) |= order_byte(front_byte);
+            *mmap.add(byte_idx_st) |= order_byte(front_byte);
         }
 
         // if the front is all there is, we can bail now
@@ -410,7 +410,7 @@ impl BitVector for MmapBitVec {
         }
         let back_byte = (x << (BIT_VEC_SLICE_SIZE - size_back) >> (BIT_VEC_SLICE_SIZE - 8)) as u8;
         unsafe {
-            *mmap.offset(byte_idx_en as isize) |= order_byte(back_byte);
+            *mmap.add(byte_idx_en) |= order_byte(back_byte);
         }
 
         // only two bytes long, bail out
@@ -430,7 +430,7 @@ impl BitVector for MmapBitVec {
         }
         for (byte_idx, byte) in ((byte_idx_st + 1)..byte_idx_en).zip(bytes.iter()) {
             unsafe {
-                *mmap.offset(byte_idx as isize) |= order_byte(*byte);
+                *mmap.add(byte_idx) |= order_byte(*byte);
             }
         }
     }
@@ -458,7 +458,7 @@ impl BitVector for MmapBitVec {
         let size_front = 8u8 - (r.start & 7) as u8;
         if let Some(mask) = 0xFFu8.checked_shl(u32::from(size_front)) {
             unsafe {
-                *mmap.offset(byte_idx_st as isize) &= order_byte(mask);
+                *mmap.add(byte_idx_st) &= order_byte(mask);
             }
         }
 
@@ -474,7 +474,7 @@ impl BitVector for MmapBitVec {
         }
         if let Some(mask) = 0xFFu8.checked_shr(u32::from(size_back)) {
             unsafe {
-                *mmap.offset(byte_idx_en as isize) &= order_byte(mask);
+                *mmap.add(byte_idx_en) &= order_byte(mask);
             }
         }
 
@@ -486,7 +486,7 @@ impl BitVector for MmapBitVec {
         // zero out all the middle bytes (maybe there's a faster way?)
         for byte_idx in (byte_idx_st + 1)..byte_idx_en {
             unsafe {
-                *mmap.offset(byte_idx as isize) = 0u8;
+                *mmap.add(byte_idx) = 0u8;
             }
         }
     }
@@ -500,9 +500,7 @@ impl BitVector for MmapBitVec {
 
         let size_front = 8u8 - (r.start & 7) as u8;
         if let Some(mask) = 0xFFu8.checked_shl(u32::from(size_front)) {
-            let byte = unsafe {
-                *mmap.offset(byte_idx_st as isize) & order_byte(mask)
-            };
+            let byte = unsafe { *mmap.add(byte_idx_st) & order_byte(mask) };
             bit_count += byte.count_ones() as usize
         }
 
@@ -517,9 +515,7 @@ impl BitVector for MmapBitVec {
             size_back = 8;
         }
         if let Some(mask) = 0xFFu8.checked_shr(u32::from(size_back)) {
-            let byte = unsafe {
-                *mmap.offset(byte_idx_en as isize) & order_byte(mask)
-            };
+            let byte = unsafe { *mmap.add(byte_idx_en) & order_byte(mask) };
             bit_count += byte.count_ones() as usize
         }
 
@@ -530,9 +526,7 @@ impl BitVector for MmapBitVec {
 
         // get all the intermediate bytes (which don't need masking)
         for byte_idx in (byte_idx_st + 1)..byte_idx_en {
-            let byte = unsafe {
-                *mmap.offset(byte_idx as isize)
-            };
+            let byte = unsafe { *mmap.add(byte_idx) };
             bit_count += byte.count_ones() as usize
         }
 
@@ -546,9 +540,7 @@ impl BitVector for MmapBitVec {
 
         let mut rank_count = 0usize;
         for byte_idx in byte_idx_st.. {
-            let mut byte = unsafe {
-                *mmap.offset(byte_idx as isize)
-            };
+            let mut byte = unsafe { *mmap.add(byte_idx) };
             if byte_idx == byte_idx_st {
                 if let Some(mask) = 0xFFu8.checked_shl(u32::from(size_front)) {
                     byte &= mask;
@@ -556,11 +548,11 @@ impl BitVector for MmapBitVec {
             }
             if rank_count + byte.count_ones() as usize >= n {
                 for bit_idx in 0..8 {
-                    if (0b10000000 >> bit_idx) & byte != 0 {
+                    if (0b1000_0000 >> bit_idx) & byte != 0 {
                         rank_count += 1;
                     }
                     if rank_count == n {
-                        return Some(byte_idx << 3 + bit_idx);
+                        return Some((byte_idx << 3) + bit_idx);
                     }
                 }
                 panic!("Select failed to find enough bits (but there were!)");
@@ -589,7 +581,7 @@ fn order_byte(b: u8) -> u8 {
 #[cfg(feature = "backward_bytes")]
 fn order_byte(b: u8) -> u8 {
     // in python: ','.join(str(eval('{:08b}b0'.format(i)[::-1])) for i in range(256))
-    #[cfg_attr(rustfmt, rustfmt_skip)]
+    #[rustfmt::skip]
     const BACKWARDS: [u8; 256] = [
         0,128,64,192,32,160,96,224,16,144,80,208,48,176,112,240,8,136,72,
         200,40,168,104,232,24,152,88,216,56,184,120,248,4,132,68,196,36,

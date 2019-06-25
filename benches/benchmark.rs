@@ -8,14 +8,12 @@ use std::mem::transmute;
 use std::ops::Range;
 
 use bencher::Bencher;
-use memmap::{MmapOptions, MmapMut};
-use mmap_bitvec::{MmapBitVec, BitVector};
-
+use memmap::{MmapMut, MmapOptions};
+use mmap_bitvec::{BitVector, MmapBitVec};
 
 type BitVecSlice = u64;
 const BIT_VEC_SLICE_SIZE: u8 = 64;
 const FILENAME: &str = "/Users/roderick/Documents/mgo_data/targeted_loci/bfield.mmap";
-
 
 // we could use an RNG, but I want to make sure everything is
 // as comparable as possible
@@ -36,9 +34,7 @@ fn get_range_simplified(mmap: &MmapMut, size: usize, l: usize) -> BitVecSlice {
     let ptr: *const u8 = mmap.as_ptr();
 
     // read the last byte first
-    let end = unsafe {
-        *ptr.offset(byte_idx_en as isize)
-    };
+    let end = unsafe { *ptr.offset(byte_idx_en as isize) };
     // align the end of the data with the end of the u64/u128
     let mut v = BitVecSlice::from(end);
     v >>= 7 - ((l + 63) & 7);
@@ -55,8 +51,8 @@ fn get_range_simplified(mmap: &MmapMut, size: usize, l: usize) -> BitVecSlice {
         let bit_offset = new_size + (l & 7) as u8;
         for (new_idx, old_idx) in (byte_idx_st..byte_idx_en).enumerate() {
             unsafe {
-                v |= BitVecSlice::from(*ptr.offset(old_idx as isize)) <<
-                    (bit_offset - 8u8 * (new_idx as u8 + 1));
+                v |= BitVecSlice::from(*ptr.offset(old_idx as isize))
+                    << (bit_offset - 8u8 * (new_idx as u8 + 1));
             }
         }
     }
@@ -85,7 +81,6 @@ fn get_range(mmap: &MmapMut, size: usize, r: Range<usize>) -> BitVecSlice {
     // align the end of the data with the end of the u64/u128
     v >>= 7 - ((r.end - 1) & 7);
 
-
     if r.start < size - BIT_VEC_SLICE_SIZE as usize {
         // really nasty/unsafe, but we're just reading a u64/u128 out instead of doing it
         // byte-wise --- also does not work with legacy mode!!!
@@ -98,8 +93,8 @@ fn get_range(mmap: &MmapMut, size: usize, r: Range<usize>) -> BitVecSlice {
         let bit_offset = new_size + (r.start & 7) as u8;
         for (new_idx, old_idx) in (byte_idx_st..byte_idx_en).enumerate() {
             unsafe {
-                v |= BitVecSlice::from(*ptr.offset(old_idx as isize)) <<
-                    (bit_offset - 8u8 * (new_idx as u8 + 1));
+                v |= BitVecSlice::from(*ptr.offset(old_idx as isize))
+                    << (bit_offset - 8u8 * (new_idx as u8 + 1));
             }
         }
     }
@@ -109,11 +104,13 @@ fn get_range(mmap: &MmapMut, size: usize, r: Range<usize>) -> BitVecSlice {
 }
 
 fn bench_get_range_simplified(bench: &mut Bencher) {
-    let file = OpenOptions::new().read(true).write(true).open(FILENAME).unwrap();
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(FILENAME)
+        .unwrap();
     let size = file.metadata().unwrap().len() as usize;
-    let mmap = unsafe {
-        MmapOptions::new().map_mut(&file).unwrap()
-    };
+    let mmap = unsafe { MmapOptions::new().map_mut(&file).unwrap() };
 
     let mut r = 0;
     let mut i = 1;
@@ -127,18 +124,20 @@ fn bench_get_range_simplified(bench: &mut Bencher) {
 }
 
 fn bench_get_range(bench: &mut Bencher) {
-    let file = OpenOptions::new().read(true).write(true).open(FILENAME).unwrap();
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(FILENAME)
+        .unwrap();
     let size = file.metadata().unwrap().len() as usize;
-    let mmap = unsafe {
-        MmapOptions::new().map_mut(&file).unwrap()
-    };
+    let mmap = unsafe { MmapOptions::new().map_mut(&file).unwrap() };
 
     let mut r = 0;
     let mut i = 1;
     bench.iter(|| {
         for _ in 0..100000 {
             let l = i % (size - 64);
-            r += get_range(&mmap, size, l..l+64).count_ones();
+            r += get_range(&mmap, size, l..l + 64).count_ones();
             i = next_random(i);
         }
     })
@@ -151,12 +150,17 @@ fn bench_get_range_actual(bench: &mut Bencher) {
     bench.iter(|| {
         for _ in 0..100000 {
             let l = i % (bitvec.size() - 64);
-            r += bitvec.get_range(l..l+64).count_ones();
+            r += bitvec.get_range(l..l + 64).count_ones();
             i = next_random(i);
         }
     })
 }
 
-benchmark_group!(get_fns, bench_get_range, bench_get_range_simplified, bench_get_range_actual);
+benchmark_group!(
+    get_fns,
+    bench_get_range,
+    bench_get_range_simplified,
+    bench_get_range_actual
+);
 
 benchmark_main!(get_fns);
