@@ -1,5 +1,7 @@
 # mmap-bitvec #
 
+[![CircleCI](https://circleci.com/gh/onecodex/mmap-bitvec.svg?style=svg&circle-token=dcb1850cbbec3e55d28cec4cb5082bb30199cf97)](https://circleci.com/gh/onecodex/mmap-bitvec)
+
 mmap-bitvec is a library for working with mmap-backed bit-vectors and some simple
 data structures derived from bit-vectors.
 
