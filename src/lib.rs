@@ -11,8 +11,8 @@ pub mod bloom;
 pub mod mmap_bitvec;
 
 #[doc(inline)]
-pub use bitvec::{BitVector, BitVecSlice, BIT_VEC_SLICE_SIZE};
-#[doc(inline)]
-pub use mmap_bitvec::MmapBitVec;
+pub use bitvec::{BitVecSlice, BitVector, BIT_VEC_SLICE_SIZE};
 #[doc(inline)]
 pub use bloom::BloomFilter;
+#[doc(inline)]
+pub use mmap_bitvec::MmapBitVec;
