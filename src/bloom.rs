@@ -98,17 +98,19 @@ impl BloomFilter {
     }
 }
 
+#[cfg(test)]
+mod test {
+    #[test]
+    fn test_bloom_filter() {
+        use std::fs::remove_file;
+        let mut filter = BloomFilter::new(Some("./test_bloom"), 100, 2).unwrap();
+        let (a, b) = (1, 2);
+        assert!(!filter.contains(a));
+        assert!(!filter.contains(b));
+        filter.insert(b);
+        assert!(!filter.contains(a));
+        assert!(filter.contains(b));
 
-#[test]
-fn test_bloom_filter() {
-    use std::fs::remove_file;
-    let mut filter = BloomFilter::new(Some("./test_bloom"), 100, 2).unwrap();
-    let (a, b) = (1, 2);
-    assert!(!filter.contains(a));
-    assert!(!filter.contains(b));
-    filter.insert(b);
-    assert!(!filter.contains(a));
-    assert!(filter.contains(b));
-
-    remove_file("./test_bloom").unwrap();
+        remove_file("./test_bloom").unwrap();
+    }
 }

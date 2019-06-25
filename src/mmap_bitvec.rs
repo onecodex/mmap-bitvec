@@ -83,9 +83,10 @@ impl MmapBitVec {
     where
         P: AsRef<Path>,
     {
-        // TODO: at some point remove `readonly` from the interface (since we use
-        // MmapMut for everything)
-        let mut file = OpenOptions::new().read(true).write(true).open(filename)?;
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(!readonly)
+            .open(filename)?;
 
         // read the magic bytes and (optionally) check if it matches
         let mut file_magic = [0; 2];
@@ -94,7 +95,10 @@ impl MmapBitVec {
             if &file_magic != m {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    "file not long enough",
+                    format!(
+                        "file has wrong magic bytes {:x?} (expected {:x?})",
+                        file_magic, m
+                    ),
                 ));
             }
         }
@@ -117,7 +121,12 @@ impl MmapBitVec {
         if file.metadata()?.len() != total_header_size as u64 + byte_size {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "file not long enough",
+                format!(
+                    "file should be {} bytes (with {} header), but file is {} bytes",
+                    byte_size + total_header_size as u64,
+                    total_header_size,
+                    file.metadata()?.len(),
+                ),
             ));
         }
 
@@ -600,166 +609,168 @@ fn order_byte(b: u8) -> u8 {
     BACKWARDS[b as usize]
 }
 
+#[cfg(test)]
+mod test {
+    #[test]
+    fn test_bitvec() {
+        use std::fs::remove_file;
 
-#[test]
-fn test_bitvec() {
-    use std::fs::remove_file;
+        let header = vec![];
+        let mut b = MmapBitVec::create("./test", 100, b"!!", &header).unwrap();
+        b.set(2, true);
+        assert!(!b.get(1));
+        assert!(b.get(2));
+        assert!(!b.get(100));
+        drop(b);
+        assert!(Path::new("./test").exists());
 
-    let header = vec![];
-    let mut b = MmapBitVec::create("./test", 100, b"!!", &header).unwrap();
-    b.set(2, true);
-    assert!(!b.get(1));
-    assert!(b.get(2));
-    assert!(!b.get(100));
-    drop(b);
-    assert!(Path::new("./test").exists());
+        let b = MmapBitVec::open("./test", Some(b"!!"), true).unwrap();
+        assert!(!b.get(1));
+        assert!(b.get(2));
+        assert!(!b.get(100));
 
-    let b = MmapBitVec::open("./test", Some(b"!!"), true).unwrap();
-    assert!(!b.get(1));
-    assert!(b.get(2));
-    assert!(!b.get(100));
+        remove_file("./test").unwrap();
+    }
 
-    remove_file("./test").unwrap();
-}
+    #[test]
+    fn test_open_no_header() {
+        use std::fs::remove_file;
 
-#[test]
-fn test_open_no_header() {
-    use std::fs::remove_file;
+        let header = vec![];
+        // the bitvector has to be a size with a multiple of 8 because the
+        // no_header code always opens to the end of the last byte
+        let _ = MmapBitVec::create("./test_headerless", 80, b"!!", &header).unwrap();
+        assert!(Path::new("./test_headerless").exists());
+        let b = MmapBitVec::open_no_header("./test_headerless", 12).unwrap();
+        assert_eq!(b.size(), 80);
+        remove_file("./test_headerless").unwrap();
+    }
 
-    let header = vec![];
-    // the bitvector has to be a size with a multiple of 8 because the
-    // no_header code always opens to the end of the last byte
-    let _ = MmapBitVec::create("./test_headerless", 80, b"!!", &header).unwrap();
-    assert!(Path::new("./test_headerless").exists());
-    let b = MmapBitVec::open_no_header("./test_headerless", 12).unwrap();
-    assert_eq!(b.size(), 80);
-    remove_file("./test_headerless").unwrap();
-}
+    #[test]
+    fn test_bitvec_get_range() {
+        let mut b = MmapBitVec::from_memory(128).unwrap();
+        b.set(2, true);
+        b.set(3, true);
+        b.set(5, true);
+        assert_eq!(b.get_range(0..8), 52, "indexing within a single byte");
+        assert_eq!(b.get_range(0..16), 13312, "indexing multiple bytes");
+        assert_eq!(
+            b.get_range(0..64),
+            3_746_994_889_972_252_672,
+            "indexing the maximum # of bytes"
+        );
+        assert_eq!(
+            b.get_range(64..128),
+            0,
+            "indexing the maximum # of bytes to the end"
+        );
+        assert_eq!(b.get_range(2..10), 208, "indexing across bytes");
+        assert_eq!(
+            b.get_range(2..66),
+            14_987_979_559_889_010_688,
+            "indexing the maximum # of bytes across bytes"
+        );
+        assert_eq!(b.get_range(115..128), 0, "indexing across bytes to the end");
+    }
 
-#[test]
-fn test_bitvec_get_range() {
-    let mut b = MmapBitVec::from_memory(128).unwrap();
-    b.set(2, true);
-    b.set(3, true);
-    b.set(5, true);
-    assert_eq!(b.get_range(0..8), 52, "indexing within a single byte");
-    assert_eq!(b.get_range(0..16), 13312, "indexing multiple bytes");
-    assert_eq!(
-        b.get_range(0..64),
-        3_746_994_889_972_252_672,
-        "indexing the maximum # of bytes"
-    );
-    assert_eq!(
-        b.get_range(64..128),
-        0,
-        "indexing the maximum # of bytes to the end"
-    );
-    assert_eq!(b.get_range(2..10), 208, "indexing across bytes");
-    assert_eq!(
-        b.get_range(2..66),
-        14_987_979_559_889_010_688,
-        "indexing the maximum # of bytes across bytes"
-    );
-    assert_eq!(b.get_range(115..128), 0, "indexing across bytes to the end");
-}
+    #[test]
+    fn test_bitvec_get_range_bytes() {
+        let mut b = MmapBitVec::from_memory(128).unwrap();
+        b.set(2, true);
+        b.set(3, true);
+        b.set(5, true);
+        assert_eq!(
+            b.get_range_bytes(0..8),
+            &[0x34],
+            "indexing within a single byte"
+        );
+        assert_eq!(
+            b.get_range_bytes(0..16),
+            &[0x34, 0x00],
+            "indexing multiple bytes"
+        );
+        assert_eq!(
+            b.get_range_bytes(0..64),
+            &[0x34, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+            "indexing the maximum # of bytes"
+        );
+        assert_eq!(
+            b.get_range_bytes(64..128),
+            &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+            "indexing the maximum # of bytes to the end"
+        );
+        assert_eq!(b.get_range_bytes(2..10), &[0xD0], "indexing across bytes");
+        assert_eq!(
+            b.get_range_bytes(2..66),
+            &[0xD0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+            "indexing the maximum # of bytes across bytes"
+        );
+        assert_eq!(
+            b.get_range_bytes(115..128),
+            &[0x00, 0x00],
+            "indexing across bytes to the end"
+        );
+    }
 
-#[test]
-fn test_bitvec_get_range_bytes() {
-    let mut b = MmapBitVec::from_memory(128).unwrap();
-    b.set(2, true);
-    b.set(3, true);
-    b.set(5, true);
-    assert_eq!(
-        b.get_range_bytes(0..8),
-        &[0x34],
-        "indexing within a single byte"
-    );
-    assert_eq!(
-        b.get_range_bytes(0..16),
-        &[0x34, 0x00],
-        "indexing multiple bytes"
-    );
-    assert_eq!(
-        b.get_range_bytes(0..64),
-        &[0x34, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
-        "indexing the maximum # of bytes"
-    );
-    assert_eq!(
-        b.get_range_bytes(64..128),
-        &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
-        "indexing the maximum # of bytes to the end"
-    );
-    assert_eq!(b.get_range_bytes(2..10), &[0xD0], "indexing across bytes");
-    assert_eq!(
-        b.get_range_bytes(2..66),
-        &[0xD0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
-        "indexing the maximum # of bytes across bytes"
-    );
-    assert_eq!(
-        b.get_range_bytes(115..128),
-        &[0x00, 0x00],
-        "indexing across bytes to the end"
-    );
-}
+    #[test]
+    fn test_bitvec_set_range() {
+        let mut b = MmapBitVec::from_memory(128).unwrap();
+        b.set_range(0..4, 0b0101);
+        assert_eq!(b.get_range(0..4), 0b0101);
+        b.set_range(5..8, 0b0101);
+        assert_eq!(b.get_range(5..8), 0b0101);
+        b.set_range(123..127, 0b0101);
+        assert_eq!(b.get_range(123..127), 0b0101);
 
-#[test]
-fn test_bitvec_set_range() {
-    let mut b = MmapBitVec::from_memory(128).unwrap();
-    b.set_range(0..4, 0b0101);
-    assert_eq!(b.get_range(0..4), 0b0101);
-    b.set_range(5..8, 0b0101);
-    assert_eq!(b.get_range(5..8), 0b0101);
-    b.set_range(123..127, 0b0101);
-    assert_eq!(b.get_range(123..127), 0b0101);
+        // test across a byte boundary
+        b.set_range(6..9, 0b111);
+        assert_eq!(b.get_range(6..9), 0b111);
 
-    // test across a byte boundary
-    b.set_range(6..9, 0b111);
-    assert_eq!(b.get_range(6..9), 0b111);
+        // test zeroing works on both sides of a byte boundary
+        b.set_range(0..16, 0xFFFF);
+        assert_eq!(b.get_range(0..16), 0xFFFF);
+        b.clear_range(4..12);
+        assert_eq!(b.get_range(0..16), 0xF00F);
 
-    // test zeroing works on both sides of a byte boundary
-    b.set_range(0..16, 0xFFFF);
-    assert_eq!(b.get_range(0..16), 0xFFFF);
-    b.clear_range(4..12);
-    assert_eq!(b.get_range(0..16), 0xF00F);
+        // test setting multiple bytes (and that overflow doesn't happen)
+        b.set_range(20..36, 0xFFFF);
+        assert_eq!(b.get_range(16..20), 0x0);
+        assert_eq!(b.get_range(20..36), 0xFFFF);
+        assert_eq!(b.get_range(36..44), 0x0);
 
-    // test setting multiple bytes (and that overflow doesn't happen)
-    b.set_range(20..36, 0xFFFF);
-    assert_eq!(b.get_range(16..20), 0x0);
-    assert_eq!(b.get_range(20..36), 0xFFFF);
-    assert_eq!(b.get_range(36..44), 0x0);
+        // set an entire range
+        assert_eq!(b.get_range(39..103), 0x0);
+        b.set_range(39..103, 0xABCD1234);
+        assert_eq!(b.get_range(39..103), 0xABCD1234);
+    }
 
-    // set an entire range
-    assert_eq!(b.get_range(39..103), 0x0);
-    b.set_range(39..103, 0xABCD1234);
-    assert_eq!(b.get_range(39..103), 0xABCD1234);
-}
+    #[test]
+    fn test_bitvec_set_range_bytes() {
+        let mut b = MmapBitVec::from_memory(128).unwrap();
+        b.set_range_bytes(0..4, &[0x05]);
+        assert_eq!(b.get_range(0..4), 0b0101);
+        b.set_range_bytes(5..8, &[0x05]);
+        assert_eq!(b.get_range(5..8), 0b0101);
 
-#[test]
-fn test_bitvec_set_range_bytes() {
-    let mut b = MmapBitVec::from_memory(128).unwrap();
-    b.set_range_bytes(0..4, &[0x05]);
-    assert_eq!(b.get_range(0..4), 0b0101);
-    b.set_range_bytes(5..8, &[0x05]);
-    assert_eq!(b.get_range(5..8), 0b0101);
+        // clear the first part
+        b.clear_range(0..16);
 
-    // clear the first part
-    b.clear_range(0..16);
+        // test across a byte boundary
+        b.set_range_bytes(6..10, &[0x0D]);
+        assert_eq!(b.get_range(6..10), 0x0D);
 
-    // test across a byte boundary
-    b.set_range_bytes(6..10, &[0x0D]);
-    assert_eq!(b.get_range(6..10), 0x0D);
+        // test setting multiple bytes
+        b.set_range_bytes(0..16, &[0xFF, 0xFF]);
+        assert_eq!(b.get_range(0..16), 0xFFFF);
 
-    // test setting multiple bytes
-    b.set_range_bytes(0..16, &[0xFF, 0xFF]);
-    assert_eq!(b.get_range(0..16), 0xFFFF);
+        // test setting multiple bytes across boundaries
+        b.set_range_bytes(20..36, &[0xFF, 0xFF]);
+        assert_eq!(b.get_range(20..36), 0xFFFF);
 
-    // test setting multiple bytes across boundaries
-    b.set_range_bytes(20..36, &[0xFF, 0xFF]);
-    assert_eq!(b.get_range(20..36), 0xFFFF);
-
-    // testing ORing works
-    b.set_range_bytes(64..80, &[0xA0, 0x0A]);
-    assert_eq!(b.get_range(64..80), 0xA00A);
-    b.set_range_bytes(64..80, &[0x0B, 0xB0]);
-    assert_eq!(b.get_range(64..80), 0xABBA);
+        // testing ORing works
+        b.set_range_bytes(64..80, &[0xA0, 0x0A]);
+        assert_eq!(b.get_range(64..80), 0xA00A);
+        b.set_range_bytes(64..80, &[0x0B, 0xB0]);
+        assert_eq!(b.get_range(64..80), 0xABBA);
+    }
 }
