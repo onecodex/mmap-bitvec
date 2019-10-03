@@ -5,9 +5,44 @@ use std::mem::transmute;
 use std::ops::Range;
 use std::path::Path;
 
-use memmap::{MmapMut, MmapOptions};
+use memmap::{Mmap, MmapMut, MmapOptions};
 
-use bitvec::{BitVecSlice, BitVector, BIT_VEC_SLICE_SIZE};
+use bitvec::BitVector;
+
+/// Really annoying we have to mock over both of these rather than memmap
+/// just providing support.
+enum CommonMmap {
+    MmapMut(MmapMut),
+    Mmap(Mmap),
+}
+
+impl CommonMmap {
+    #[inline]
+    fn as_ptr(&self) -> *const u8 {
+        match self {
+            CommonMmap::MmapMut(x) => x.as_ptr(),
+            CommonMmap::Mmap(x) => x.as_ptr(),
+        }
+    }
+
+    #[inline]
+    fn as_mut_ptr(&mut self) -> *mut u8 {
+        // maybe we should override the original type signature and return
+        // a Result<*mut u8, io::Error> here with the read-only failure?
+        match self {
+            CommonMmap::MmapMut(x) => x.as_mut_ptr(),
+            CommonMmap::Mmap(_) => panic!("Attempted writing a read-only mmap"),
+        }
+    }
+
+    #[inline]
+    fn flush(&mut self) -> Result<(), io::Error> {
+        match self {
+            CommonMmap::MmapMut(x) => x.flush(),
+            CommonMmap::Mmap(_) => Ok(()),
+        }
+    }
+}
 
 /// Bit vector backed by a mmap-ed file
 ///
@@ -21,7 +56,7 @@ use bitvec::{BitVecSlice, BitVector, BIT_VEC_SLICE_SIZE};
 /// assert_eq!(bv.get_range(2..12), 0b1001101101);
 /// ```
 pub struct MmapBitVec {
-    pub mmap: MmapMut,
+    mmap: CommonMmap,
     pub size: usize,
     header: Box<[u8]>,
 }
@@ -67,7 +102,7 @@ impl MmapBitVec {
 
         let mmap = unsafe { MmapOptions::new().offset(total_header_size).map_mut(&file) }?;
         Ok(MmapBitVec {
-            mmap,
+            mmap: CommonMmap::MmapMut(mmap),
             size,
             header: header.to_vec().into_boxed_slice(),
         })
@@ -87,7 +122,7 @@ impl MmapBitVec {
         // we have to open with write=true to satisfy MmapMut (which we're
         // using because there's no generic over both MmapMut and Mmap so
         // picking one simplifies the types)
-        let mut file = OpenOptions::new().read(true).write(true).open(filename)?;
+        let mut file = OpenOptions::new().read(true).write(false).open(filename)?;
 
         // read the magic bytes and (optionally) check if it matches
         let mut file_magic = [0; 2];
@@ -132,10 +167,10 @@ impl MmapBitVec {
         }
 
         // load the mmap itself and return the whole shebang
-        let mmap = unsafe { MmapOptions::new().offset(total_header_size).map_mut(&file) }?;
+        let mmap = unsafe { MmapOptions::new().offset(total_header_size).map(&file) }?;
 
         Ok(MmapBitVec {
-            mmap,
+            mmap: CommonMmap::Mmap(mmap),
             size: size as usize,
             header: header.into_boxed_slice(),
         })
@@ -150,11 +185,11 @@ impl MmapBitVec {
     {
         let file_size = metadata(&filename)?.len() as usize;
         let byte_size = file_size - offset;
-        let f = OpenOptions::new().read(true).write(true).open(&filename)?;
-        let mmap = unsafe { MmapOptions::new().offset(offset).map_mut(&f) }?;
+        let f = OpenOptions::new().read(true).write(false).open(&filename)?;
+        let mmap = unsafe { MmapOptions::new().offset(offset).map(&f) }?;
 
         Ok(MmapBitVec {
-            mmap,
+            mmap: CommonMmap::Mmap(mmap),
             size: byte_size * 8,
             header: Box::new([]),
         })
@@ -168,7 +203,7 @@ impl MmapBitVec {
         let byte_size = ((size - 1) >> 3) as u64 + 1;
         let mmap = MmapOptions::new().len(byte_size as usize).map_anon()?;
         Ok(MmapBitVec {
-            mmap,
+            mmap: CommonMmap::MmapMut(mmap),
             size,
             header: vec![].into_boxed_slice(),
         })
@@ -263,11 +298,6 @@ impl MmapBitVec {
 }
 
 impl BitVector for MmapBitVec {
-    /// Returns the length (in bits) of the bit vector
-    fn size(&self) -> usize {
-        self.size
-    }
-
     /// Check a single value in the MmapBitVec, returning its true/false status
     ///
     /// # Panics
@@ -285,60 +315,6 @@ impl BitVector for MmapBitVec {
 
         let mmap: *const u8 = self.mmap.as_ptr();
         unsafe { (*mmap.offset(byte_idx) & (1 << bit_idx)) != 0 }
-    }
-
-    /// Read an unaligned chunk of the MmapBitVec into a u64/u128
-    ///
-    /// # Panics
-    ///
-    /// Explicitly panics if the end location, r.end, is outside the bounds
-    /// of the bit vector or if the range specified is greater than 64 bits.
-    /// (Use `get_range` instead if you need to read larger chunks) A panic
-    /// may also occur if r.start is greater than r.end.
-    fn get_range(&self, r: Range<usize>) -> BitVecSlice {
-        if r.end - r.start > BIT_VEC_SLICE_SIZE as usize {
-            panic!(format!("Range too large (>{})", BIT_VEC_SLICE_SIZE))
-        } else if r.end > self.size {
-            panic!("Range ends outside of BitVec")
-        }
-        let byte_idx_st = (r.start >> 3) as usize;
-        let byte_idx_en = ((r.end - 1) >> 3) as usize;
-        let new_size: u8 = (r.end - r.start) as u8;
-
-        let mut v;
-        let ptr: *const u8 = self.mmap.as_ptr();
-
-        // read the last byte first
-        unsafe {
-            v = BitVecSlice::from(order_byte(*ptr.add(byte_idx_en)));
-        }
-        // align the end of the data with the end of the u64/u128
-        v >>= 7 - ((r.end - 1) & 7);
-
-        if r.start < self.size - BIT_VEC_SLICE_SIZE as usize
-            && cfg!(not(feature = "backward_bytes"))
-        {
-            // really nasty/unsafe, but we're just reading a u64/u128 out instead of doing it
-            // byte-wise --- also does not work with legacy mode!!!
-            unsafe {
-                // we have to transmute since we don't know if it's a u64 or u128
-                #[allow(clippy::transmute_ptr_to_ptr)]
-                let lg_ptr: *const BitVecSlice = transmute(ptr.add(byte_idx_st));
-                v |= (*lg_ptr).to_be() << (r.start & 7) >> (BIT_VEC_SLICE_SIZE - new_size);
-            }
-        } else {
-            // special case if we can't get a whole u64 out without running outside the buffer
-            let bit_offset = new_size + (r.start & 7) as u8;
-            for (new_idx, old_idx) in (byte_idx_st..byte_idx_en).enumerate() {
-                unsafe {
-                    v |= BitVecSlice::from(order_byte(*ptr.add(old_idx)))
-                        << (bit_offset - 8u8 * (new_idx as u8 + 1));
-                }
-            }
-        }
-
-        // mask out the high bits in case we copied extra
-        v & (BitVecSlice::max_value() >> (BIT_VEC_SLICE_SIZE - new_size))
     }
 
     /// Set a single bit in the bit vector
@@ -366,129 +342,9 @@ impl BitVector for MmapBitVec {
         }
     }
 
-    /// Set a unaligned range of bits using a u64.
-    ///
-    /// Note this operation ORs the passed u64 and the existing bitmask
-    ///
-    /// # Panics
-    ///
-    /// Explicitly panics if the end location, r.end, is outside the bounds
-    /// of the bit vector. A panic may also occur if r.start is greater than
-    /// r.end.
-    fn set_range(&mut self, r: Range<usize>, x: BitVecSlice) {
-        if r.end > self.size {
-            panic!("Range ends outside of BitVec")
-        }
-        let byte_idx_st = (r.start >> 3) as usize;
-        let byte_idx_en = ((r.end - 1) >> 3) as usize;
-        let new_size: u8 = (r.end - r.start) as u8;
-
-        // split off the front byte
-        let size_front = 8u8 - (r.start & 7) as u8;
-        let front_byte = if size_front >= new_size {
-            (x << (size_front - new_size)) as u8
-        } else {
-            (x >> (new_size - size_front)) as u8
-        };
-
-        // set front with an AND mask to make sure this all the 0's in the
-        // new value get masked over the existing 1's
-        let mmap: *mut u8 = self.mmap.as_mut_ptr();
-        unsafe {
-            *mmap.add(byte_idx_st) |= order_byte(front_byte);
-        }
-
-        // if the front is all there is, we can bail now
-        if byte_idx_st == byte_idx_en {
-            return;
-        }
-
-        // set the last byte (also a "partial" byte like the first
-        let mut size_back = (r.end & 7) as u8;
-        if size_back == 0 {
-            size_back = 8;
-        }
-        let back_byte = (x << (BIT_VEC_SLICE_SIZE - size_back) >> (BIT_VEC_SLICE_SIZE - 8)) as u8;
-        unsafe {
-            *mmap.add(byte_idx_en) |= order_byte(back_byte);
-        }
-
-        // only two bytes long, bail out
-        if byte_idx_st + 1 == byte_idx_en {
-            return;
-        }
-
-        let size_main = new_size - size_front;
-        // shift off the first byte (and we don't care about the last byte,
-        // because we won't iterate through it) and then make sure that the
-        // u64 is stored in the "right" order in memory
-        let main_chunk = (x << (BIT_VEC_SLICE_SIZE - size_main)).to_be();
-
-        let bytes: [u8; BIT_VEC_SLICE_SIZE as usize / 8];
-        unsafe {
-            bytes = transmute(main_chunk);
-        }
-        for (byte_idx, byte) in ((byte_idx_st + 1)..byte_idx_en).zip(bytes.iter()) {
-            unsafe {
-                *mmap.add(byte_idx) |= order_byte(*byte);
-            }
-        }
-    }
-
-    /// Zeros out a chunk of the bitvector
-    ///
-    /// Note this operation can be used to AND a bitmask into the bitvector
-    ///
-    /// # Panics
-    ///
-    /// Explicitly panics if the end location, r.end, is outside the bounds
-    /// of the bit vector. A panic may also occur if r.start is greater than
-    /// r.end.
-    fn clear_range(&mut self, r: Range<usize>) {
-        if (r.end - 1) > self.size {
-            panic!("Range ends outside of BitVec")
-        }
-        let byte_idx_st = (r.start >> 3) as usize;
-        let byte_idx_en = ((r.end - 1) >> 3) as usize;
-
-        let mmap: *mut u8 = self.mmap.as_mut_ptr();
-
-        // set front with an AND mask to make sure this all the 0's in the
-        // new value get masked over the existing 1's
-        let size_front = 8u8 - (r.start & 7) as u8;
-        if let Some(mask) = 0xFFu8.checked_shl(u32::from(size_front)) {
-            unsafe {
-                *mmap.add(byte_idx_st) &= order_byte(mask);
-            }
-        }
-
-        // if the front is all there is, we can bail now
-        if byte_idx_st == byte_idx_en {
-            return;
-        }
-
-        // set the last byte (also a "partial" byte like the first
-        let mut size_back = (r.end & 7) as u8;
-        if size_back == 0 {
-            size_back = 8;
-        }
-        if let Some(mask) = 0xFFu8.checked_shr(u32::from(size_back)) {
-            unsafe {
-                *mmap.add(byte_idx_en) &= order_byte(mask);
-            }
-        }
-
-        // only two bytes long, bail out
-        if byte_idx_st + 1 == byte_idx_en {
-            return;
-        }
-
-        // zero out all the middle bytes (maybe there's a faster way?)
-        for byte_idx in (byte_idx_st + 1)..byte_idx_en {
-            unsafe {
-                *mmap.add(byte_idx) = 0u8;
-            }
-        }
+    /// Returns the length (in bits) of the bit vector
+    fn size(&self) -> usize {
+        self.size
     }
 
     fn rank(&self, r: Range<usize>) -> usize {
@@ -498,7 +354,10 @@ impl BitVector for MmapBitVec {
 
         let mut bit_count = 0usize;
 
-        let size_front = 8u8 - (r.start & 7) as u8;
+        let mut size_front = 8u8 - (r.start & 7) as u8;
+        if size_front == 8 {
+            size_front = 0;
+        }
         if let Some(mask) = 0xFFu8.checked_shl(u32::from(size_front)) {
             let byte = unsafe { *mmap.add(byte_idx_st) & order_byte(mask) };
             bit_count += byte.count_ones() as usize
@@ -511,8 +370,8 @@ impl BitVector for MmapBitVec {
 
         // get the last byte (also a "partial" byte like the first)
         let mut size_back = (r.end & 7) as u8;
-        if size_back == 0 {
-            size_back = 8;
+        if size_back == 8 {
+            size_back = 0;
         }
         if let Some(mask) = 0xFFu8.checked_shr(u32::from(size_back)) {
             let byte = unsafe { *mmap.add(byte_idx_en) & order_byte(mask) };
@@ -560,6 +419,174 @@ impl BitVector for MmapBitVec {
             rank_count += byte.count_ones() as usize;
         }
         None
+    }
+
+    /// Read an unaligned chunk of the MmapBitVec into a u128
+    ///
+    /// # Panics
+    ///
+    /// Explicitly panics if the end location, r.end, is outside the bounds
+    /// of the bit vector or if the range specified is greater than 128 bits.
+    /// (Use `get_range` instead if you need to read larger chunks) A panic
+    /// may also occur if r.start is greater than r.end.
+    fn get_range(&self, r: Range<usize>) -> u128 {
+        if r.end - r.start > 128usize {
+            panic!("Range too large (>128)")
+        } else if r.end > self.size {
+            panic!("Range ends outside of BitVec")
+        }
+        let byte_idx_st = (r.start >> 3) as usize;
+        let byte_idx_en = ((r.end - 1) >> 3) as usize;
+        let new_size: u8 = (r.end - r.start) as u8;
+
+        let mut v;
+        let ptr: *const u8 = self.mmap.as_ptr();
+
+        // read the last byte first
+        unsafe {
+            v = u128::from(order_byte(*ptr.add(byte_idx_en)));
+        }
+        // align the end of the data with the end of the u128
+        v >>= 7 - ((r.end - 1) & 7);
+
+        if r.start < self.size - 128usize && cfg!(not(feature = "backward_bytes")) {
+            // really nasty/unsafe, but we're just reading a u64/u128 out instead of doing it
+            // byte-wise --- also does not work with legacy mode!!!
+            unsafe {
+                // we have to transmute since we don't know if it's a u64 or u128
+                #[allow(clippy::transmute_ptr_to_ptr)]
+                let lg_ptr: *const u128 = transmute(ptr.add(byte_idx_st));
+                v |= (*lg_ptr).to_be() << (r.start & 7) >> (128 - new_size);
+            }
+        } else {
+            // special case if we can't get a whole u64 out without running outside the buffer
+            let bit_offset = new_size + (r.start & 7) as u8;
+            for (new_idx, old_idx) in (byte_idx_st..byte_idx_en).enumerate() {
+                unsafe {
+                    v |= u128::from(order_byte(*ptr.add(old_idx)))
+                        << (bit_offset - 8u8 * (new_idx as u8 + 1));
+                }
+            }
+        }
+
+        // mask out the high bits in case we copied extra
+        v & (u128::max_value() >> (128 - new_size))
+    }
+
+    /// Set a unaligned range of bits using a u64.
+    ///
+    /// Note this operation ORs the passed u64 and the existing bitmask
+    ///
+    /// # Panics
+    ///
+    /// Explicitly panics if the end location, r.end, is outside the bounds
+    /// of the bit vector. A panic may also occur if r.start is greater than
+    /// r.end.
+    fn set_range(&mut self, r: Range<usize>, x: u128) {
+        if r.end > self.size {
+            panic!("Range ends outside of BitVec")
+        }
+        let byte_idx_st = (r.start >> 3) as usize;
+        let byte_idx_en = ((r.end - 1) >> 3) as usize;
+        let new_size: u8 = (r.end - r.start) as u8;
+
+        // split off the front byte
+        let size_front = 8u8 - (r.start & 7) as u8;
+        let front_byte = if size_front >= new_size {
+            (x << (size_front - new_size)) as u8
+        } else {
+            (x >> (new_size - size_front)) as u8
+        };
+
+        // set front with an AND mask to make sure this all the 0's in the
+        // new value get masked over the existing 1's
+        let mmap: *mut u8 = self.mmap.as_mut_ptr();
+        unsafe {
+            *mmap.add(byte_idx_st) |= order_byte(front_byte);
+        }
+
+        // if the front is all there is, we can bail now
+        if byte_idx_st == byte_idx_en {
+            return;
+        }
+
+        // set the last byte (also a "partial" byte like the first
+        let mut size_back = (r.end & 7) as u8;
+        if size_back == 0 {
+            size_back = 8;
+        }
+        let back_byte = (x << (128 - size_back) >> 120) as u8;
+        unsafe {
+            *mmap.add(byte_idx_en) |= order_byte(back_byte);
+        }
+
+        // only two bytes long, bail out
+        if byte_idx_st + 1 == byte_idx_en {
+            return;
+        }
+
+        let size_main = new_size - size_front;
+        // shift off the first byte (and we don't care about the last byte,
+        // because we won't iterate through it) and then make sure that the
+        // u64 is stored in the "right" order in memory
+        let main_chunk = (x << (128 - size_main)).to_be();
+
+        let bytes: [u8; 16];
+        unsafe {
+            bytes = transmute(main_chunk);
+        }
+        for (byte_idx, byte) in ((byte_idx_st + 1)..byte_idx_en).zip(bytes.iter()) {
+            unsafe {
+                *mmap.add(byte_idx) |= order_byte(*byte);
+            }
+        }
+    }
+
+    fn clear_range(&mut self, r: Range<usize>) {
+        if (r.end - 1) > self.size {
+            panic!("Range ends outside of BitVec")
+        }
+        let byte_idx_st = (r.start >> 3) as usize;
+        let byte_idx_en = ((r.end - 1) >> 3) as usize;
+
+        let mmap: *mut u8 = self.mmap.as_mut_ptr();
+
+        // set front with an AND mask to make sure this all the 0's in the
+        // new value get masked over the existing 1's
+        let size_front = 8u8 - (r.start & 7) as u8;
+        if let Some(mask) = 0xFFu8.checked_shl(u32::from(size_front)) {
+            unsafe {
+                *mmap.add(byte_idx_st) &= order_byte(mask);
+            }
+        }
+
+        // if the front is all there is, we can bail now
+        if byte_idx_st == byte_idx_en {
+            return;
+        }
+
+        // set the last byte (also a "partial" byte like the first
+        let mut size_back = (r.end & 7) as u8;
+        if size_back == 0 {
+            size_back = 8;
+        }
+        if let Some(mask) = 0xFFu8.checked_shr(u32::from(size_back)) {
+            unsafe {
+                *mmap.add(byte_idx_en) &= order_byte(mask);
+            }
+        }
+
+        // only two bytes long, bail out
+        if byte_idx_st + 1 == byte_idx_en {
+            return;
+        }
+
+        // zero out all the middle bytes (maybe there's a faster way?)
+        for byte_idx in (byte_idx_st + 1)..byte_idx_en {
+            unsafe {
+                *mmap.add(byte_idx) = 0u8;
+            }
+        }
     }
 }
 
@@ -744,30 +771,44 @@ mod test {
     #[test]
     fn test_bitvec_set_range_bytes() {
         let mut b = MmapBitVec::from_memory(128).unwrap();
-        b.set_range_bytes(0..4, &[0x05]);
+        b.set_range_bytes(0..4, &[0x05u8]);
         assert_eq!(b.get_range(0..4), 0b0101);
-        b.set_range_bytes(5..8, &[0x05]);
+        b.set_range_bytes(5..8, &[0x05u8]);
         assert_eq!(b.get_range(5..8), 0b0101);
 
         // clear the first part
         b.clear_range(0..16);
 
         // test across a byte boundary
-        b.set_range_bytes(6..10, &[0x0D]);
+        b.set_range_bytes(6..10, &[0x0Du8]);
         assert_eq!(b.get_range(6..10), 0x0D);
 
         // test setting multiple bytes
-        b.set_range_bytes(0..16, &[0xFF, 0xFF]);
+        b.set_range_bytes(0..16, &[0xFFu8, 0xFFu8]);
         assert_eq!(b.get_range(0..16), 0xFFFF);
 
         // test setting multiple bytes across boundaries
-        b.set_range_bytes(20..36, &[0xFF, 0xFF]);
+        b.set_range_bytes(20..36, &[0xFFu8, 0xFFu8]);
         assert_eq!(b.get_range(20..36), 0xFFFF);
 
         // testing ORing works
-        b.set_range_bytes(64..80, &[0xA0, 0x0A]);
+        b.set_range_bytes(64..80, &[0xA0u8, 0x0Au8]);
         assert_eq!(b.get_range(64..80), 0xA00A);
-        b.set_range_bytes(64..80, &[0x0B, 0xB0]);
+        b.set_range_bytes(64..80, &[0x0Bu8, 0xB0u8]);
         assert_eq!(b.get_range(64..80), 0xABBA);
+    }
+
+    #[test]
+    fn test_rank_select() {
+        let mut b = MmapBitVec::from_memory(128).unwrap();
+        b.set(7, true);
+        b.set(56, true);
+        b.set(127, true);
+
+        assert_eq!(b.rank(0..8), 1);
+        assert_eq!(b.rank(0..128), 3);
+
+        assert_eq!(b.select(1, 0), Some(7));
+        assert_eq!(b.select(3, 0), Some(127));
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "mmap-bitvec"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["Roderick Bovee <roderick@onecodex.com>"]
 
 [dependencies]
@@ -8,7 +8,6 @@ memmap = "0.6.2"
 murmurhash3 = "0.0.5"
 
 [features]
-u128 = []
 backward_bytes = []
 
 [dev-dependencies]
