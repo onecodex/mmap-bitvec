@@ -115,14 +115,14 @@ impl MmapBitVec {
     /// The header_size must be specified (as it isn't stored in the file to
     /// allow the magic bytes to be set) and there is an optional read_only
     /// property that will lock the underlying mmap from writing.
-    pub fn open<P>(filename: P, magic: Option<&[u8; 2]>) -> Result<Self, io::Error>
+    pub fn open<P>(filename: P, magic: Option<&[u8; 2]>, read_only: bool) -> Result<Self, io::Error>
     where
         P: AsRef<Path>,
     {
         // we have to open with write=true to satisfy MmapMut (which we're
         // using because there's no generic over both MmapMut and Mmap so
         // picking one simplifies the types)
-        let mut file = OpenOptions::new().read(true).write(false).open(filename)?;
+        let mut file = OpenOptions::new().read(true).write(!read_only).open(filename)?;
 
         // read the magic bytes and (optionally) check if it matches
         let mut file_magic = [0; 2];
@@ -166,11 +166,17 @@ impl MmapBitVec {
             ));
         }
 
-        // load the mmap itself and return the whole shebang
-        let mmap = unsafe { MmapOptions::new().offset(total_header_size).map(&file) }?;
+        let mmap = if read_only {
+            // load the mmap itself and return the whole shebang
+            let mmap = unsafe { MmapOptions::new().offset(total_header_size).map(&file) }?;
+            CommonMmap::Mmap(mmap)
+        } else {
+            let mmap = unsafe { MmapOptions::new().offset(total_header_size).map_mut(&file) }?;
+            CommonMmap::MmapMut(mmap)
+        };
 
         Ok(MmapBitVec {
-            mmap: CommonMmap::Mmap(mmap),
+            mmap,
             size: size as usize,
             header: header.into_boxed_slice(),
         })
@@ -648,7 +654,7 @@ mod test {
         drop(b);
         assert!(Path::new("./test").exists());
 
-        let b = MmapBitVec::open("./test", Some(b"!!")).unwrap();
+        let b = MmapBitVec::open("./test", Some(b"!!"), true).unwrap();
         assert!(!b.get(1));
         assert!(b.get(2));
         assert!(!b.get(100));
