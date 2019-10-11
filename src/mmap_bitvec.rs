@@ -11,14 +11,14 @@ use bitvec::BitVector;
 
 /// Really annoying we have to mock over both of these rather than memmap
 /// just providing support.
-enum CommonMmap {
+pub enum CommonMmap {
     MmapMut(MmapMut),
     Mmap(Mmap),
 }
 
 impl CommonMmap {
     #[inline]
-    fn as_ptr(&self) -> *const u8 {
+    pub fn as_ptr(&self) -> *const u8 {
         match self {
             CommonMmap::MmapMut(x) => x.as_ptr(),
             CommonMmap::Mmap(x) => x.as_ptr(),
@@ -26,7 +26,7 @@ impl CommonMmap {
     }
 
     #[inline]
-    fn as_mut_ptr(&mut self) -> *mut u8 {
+    pub fn as_mut_ptr(&mut self) -> *mut u8 {
         // maybe we should override the original type signature and return
         // a Result<*mut u8, io::Error> here with the read-only failure?
         match self {
@@ -36,7 +36,7 @@ impl CommonMmap {
     }
 
     #[inline]
-    fn flush(&mut self) -> Result<(), io::Error> {
+    pub fn flush(&mut self) -> Result<(), io::Error> {
         match self {
             CommonMmap::MmapMut(x) => x.flush(),
             CommonMmap::Mmap(_) => Ok(()),
@@ -56,7 +56,7 @@ impl CommonMmap {
 /// assert_eq!(bv.get_range(2..12), 0b1001101101);
 /// ```
 pub struct MmapBitVec {
-    mmap: CommonMmap,
+    pub mmap: CommonMmap,
     pub size: usize,
     header: Box<[u8]>,
 }
@@ -122,7 +122,10 @@ impl MmapBitVec {
         // we have to open with write=true to satisfy MmapMut (which we're
         // using because there's no generic over both MmapMut and Mmap so
         // picking one simplifies the types)
-        let mut file = OpenOptions::new().read(true).write(!read_only).open(filename)?;
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(!read_only)
+            .open(filename)?;
 
         // read the magic bytes and (optionally) check if it matches
         let mut file_magic = [0; 2];
