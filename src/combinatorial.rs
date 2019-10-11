@@ -14,23 +14,29 @@ pub fn rank(value: usize, k: u8) -> u128 {
     // `RUST_TEST_THREADS=1 cargo test` or else you'll get tons of
     // errors because of data races between threads with different k's
 
-    // also some tests (i.e. ones with k=1) fail because there are fewer
-    // than 200000 possible values for the table
     unsafe {
         // clear out the lookup table if we have a new k and fill
         // it with values for the new k
         if MARKER_BITS != k {
+            let mut table_size = MARKER_TABLE_SIZE;
+            if k == 1 {
+                table_size = 128;
+            } else if k == 2 {
+                table_size = 8128;
+            }
             MARKER_TABLE = [0; MARKER_TABLE_SIZE];
-            MARKER_TABLE[0] = (1 << k) - 1 as BitVecSlice;
-            for i in 1..MARKER_TABLE_SIZE {
-                MARKER_TABLE[i] = next_marker(MARKER_TABLE[i - 1]);
+            MARKER_TABLE[0] = (1 << k) - 1;
+            for i in 1..table_size {
+                MARKER_TABLE[i] = next_rank(MARKER_TABLE[i - 1]);
             }
             MARKER_BITS = k;
         }
+        // it's possible this may overflow if value > (128 choose k) or return
+        // a bad value (0) if value > (128 choose k) and k == 1 or 2
         if value as usize >= MARKER_TABLE_SIZE {
             let mut marker = MARKER_TABLE[MARKER_TABLE_SIZE - 1];
             for _ in 0..(value as usize - MARKER_TABLE_SIZE) {
-                marker = next_marker(marker);
+                marker = next_rank(marker);
             }
             marker
         } else {
@@ -156,7 +162,7 @@ pub fn choose(n: u64, k: u8) -> u64 {
                 }
             }
             TryFrom::try_from(num / denom)
-                .expect(&format!("{} choose {} is greater than 2**64", n, k))
+                .unwrap_or_else(|_| panic!("{} choose {} is greater than 2**64", n, k))
             // (or recursively) choose(n - 1, k - 1) + choose(n-1, k)
             // for floats, this should work since they handle fractions:
             // (1..u64::from(k)).map(|i| (n + 1 - i) / i).product(),
