@@ -53,7 +53,7 @@ impl BloomFilter {
         let bitvec = match filename {
             Some(filename) => {
                 if Path::exists(filename.as_ref()) {
-                    MmapBitVec::open(&filename, Some(b"!!"))?
+                    MmapBitVec::open(&filename, Some(b"!!"), false)?
                 } else {
                     MmapBitVec::create(&filename, bits, *b"!!", &header)?
                 }
