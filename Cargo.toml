@@ -2,6 +2,7 @@
 name = "mmap-bitvec"
 version = "0.3.0"
 authors = ["Roderick Bovee <roderick@onecodex.com>"]
+autobenches = false
 
 [dependencies]
 memmap = "0.6.2"
@@ -10,3 +11,10 @@ murmurhash3 = "0.0.5"
 [features]
 backward_bytes = []
 rank_lookup = []
+
+[dev-dependencies]
+criterion = "0.3"
+
+[[bench]]
+name = "benchmark"
+harness = false
