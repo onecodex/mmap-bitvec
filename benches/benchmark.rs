@@ -1,5 +1,5 @@
-#[macro_use]
-extern crate bencher;
+#![feature(test)]
+extern crate test;
 extern crate memmap;
 extern crate mmap_bitvec;
 
@@ -7,13 +7,12 @@ use std::fs::OpenOptions;
 use std::mem::transmute;
 use std::ops::Range;
 
-use bencher::Bencher;
 use memmap::{MmapMut, MmapOptions};
 use mmap_bitvec::{BitVector, MmapBitVec};
 
 type BitVecSlice = u64;
 const BIT_VEC_SLICE_SIZE: u8 = 64;
-const FILENAME: &str = "/Users/roderick/Documents/mgo_data/targeted_loci/bfield.mmap";
+const FILENAME: &str = "./bfield.mmap";
 
 // we could use an RNG, but I want to make sure everything is
 // as comparable as possible
@@ -103,7 +102,8 @@ fn get_range(mmap: &MmapMut, size: usize, r: Range<usize>) -> BitVecSlice {
     v & (BitVecSlice::max_value() >> (BIT_VEC_SLICE_SIZE - new_size))
 }
 
-fn bench_get_range_simplified(bench: &mut Bencher) {
+#[bench]
+fn bench_get_range_simplified(bench: &mut test::Bencher) {
     let file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -123,7 +123,8 @@ fn bench_get_range_simplified(bench: &mut Bencher) {
     })
 }
 
-fn bench_get_range(bench: &mut Bencher) {
+#[bench]
+fn bench_get_range(bench: &mut test::Bencher) {
     let file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -143,7 +144,8 @@ fn bench_get_range(bench: &mut Bencher) {
     })
 }
 
-fn bench_get_range_actual(bench: &mut Bencher) {
+#[bench]
+fn bench_get_range_actual(bench: &mut test::Bencher) {
     let bitvec = MmapBitVec::open_no_header(FILENAME, 0).unwrap();
     let mut r = 0;
     let mut i = 1;
@@ -155,12 +157,3 @@ fn bench_get_range_actual(bench: &mut Bencher) {
         }
     })
 }
-
-benchmark_group!(
-    get_fns,
-    bench_get_range,
-    bench_get_range_simplified,
-    bench_get_range_actual
-);
-
-benchmark_main!(get_fns);

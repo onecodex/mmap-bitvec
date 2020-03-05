@@ -10,10 +10,3 @@ murmurhash3 = "0.0.5"
 [features]
 backward_bytes = []
 rank_lookup = []
-
-[dev-dependencies]
-bencher = "0.1.5"
-
-[[bench]]
-name = "benchmark"
-harness = false

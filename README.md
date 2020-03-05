@@ -5,7 +5,12 @@
 mmap-bitvec is a library for working with mmap-backed bit-vectors and some simple
 data structures derived from bit-vectors.
 
-## Example ##
+## Benchmarks
+
+To run benchmarks you need to download a bfield.mmap file, I used `s3://refgenomics-datafiles/dbs/mg_targeted_loci_20160517/bfield.mmap` in
+the root of the repo and then run `cargo +nightly bench`.
+
+## Example
 
 ```rust
     let mut b = BitVec::from_memory(128).unwrap();
@@ -14,3 +19,4 @@ data structures derived from bit-vectors.
     assert!(b.get(2));
     assert_eq!(b.get_range(0..8), 0b00100000);
 ```
+
