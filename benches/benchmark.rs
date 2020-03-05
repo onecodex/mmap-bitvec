@@ -1,7 +1,6 @@
-#![feature(test)]
-extern crate test;
 extern crate memmap;
 extern crate mmap_bitvec;
+extern crate criterion;
 
 use std::fs::OpenOptions;
 use std::mem::transmute;
@@ -9,6 +8,8 @@ use std::ops::Range;
 
 use memmap::{MmapMut, MmapOptions};
 use mmap_bitvec::{BitVector, MmapBitVec};
+
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
 type BitVecSlice = u64;
 const BIT_VEC_SLICE_SIZE: u8 = 64;
@@ -102,8 +103,7 @@ fn get_range(mmap: &MmapMut, size: usize, r: Range<usize>) -> BitVecSlice {
     v & (BitVecSlice::max_value() >> (BIT_VEC_SLICE_SIZE - new_size))
 }
 
-#[bench]
-fn bench_get_range_simplified(bench: &mut test::Bencher) {
+fn bench_get_range_simplified() {
     let file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -114,17 +114,14 @@ fn bench_get_range_simplified(bench: &mut test::Bencher) {
 
     let mut r = 0;
     let mut i = 1;
-    bench.iter(|| {
-        for _ in 0..100000 {
-            let l = i % (size - 64);
-            r += get_range_simplified(&mmap, size, l).count_ones();
-            i = next_random(i);
-        }
-    })
+    for _ in 0..100000 {
+        let l = i % (size - 64);
+        r += get_range_simplified(&mmap, size, l).count_ones();
+        i = next_random(i);
+    }
 }
 
-#[bench]
-fn bench_get_range(bench: &mut test::Bencher) {
+fn bench_get_range() {
     let file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -135,25 +132,29 @@ fn bench_get_range(bench: &mut test::Bencher) {
 
     let mut r = 0;
     let mut i = 1;
-    bench.iter(|| {
-        for _ in 0..100000 {
-            let l = i % (size - 64);
-            r += get_range(&mmap, size, l..l + 64).count_ones();
-            i = next_random(i);
-        }
-    })
+    for _ in 0..100000 {
+        let l = i % (size - 64);
+        r += get_range(&mmap, size, l..l + 64).count_ones();
+        i = next_random(i);
+    }
 }
 
-#[bench]
-fn bench_get_range_actual(bench: &mut test::Bencher) {
+fn bench_get_range_actual() {
     let bitvec = MmapBitVec::open_no_header(FILENAME, 0).unwrap();
     let mut r = 0;
     let mut i = 1;
-    bench.iter(|| {
-        for _ in 0..100000 {
-            let l = i % (bitvec.size() - 64);
-            r += bitvec.get_range(l..l + 64).count_ones();
-            i = next_random(i);
-        }
-    })
+    for _ in 0..100000 {
+        let l = i % (bitvec.size() - 64);
+        r += bitvec.get_range(l..l + 64).count_ones();
+        i = next_random(i);
+    }
 }
+
+fn criterion_benchmark(c: &mut Criterion) {
+    c.bench_function("get_range_actual", |b| b.iter(|| bench_get_range_actual()));
+    c.bench_function("get_range_simplified", |b| b.iter(|| bench_get_range_simplified()));
+    c.bench_function("get_range", |b| b.iter(|| bench_get_range()));
+}
+
+criterion_group!(benches, criterion_benchmark);
+criterion_main!(benches);
