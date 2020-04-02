@@ -4,8 +4,8 @@ use std::path::Path;
 
 use murmurhash3::murmurhash3_x64_128;
 
-use bitvec::BitVector;
-use mmap_bitvec::MmapBitVec;
+use crate::bitvec::BitVector;
+use crate::mmap_bitvec::MmapBitVec;
 
 // we don't want to use murmurhash3::Murmur3Hasher b/c it makes copies of the
 // bytes to be hashed with every single `hash` call
