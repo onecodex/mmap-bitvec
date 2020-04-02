@@ -89,8 +89,8 @@ impl MmapBitVec {
             .create(true)
             .open(filename)?;
         // two magic bytes, u16 header length, header, u64 bitvec length, bitvec
-        let total_header_size = 2 + 2 + header.len() + 8;
-        file.set_len(total_header_size as u64 + byte_size)?;
+        let total_header_size = (2 + 2 + header.len() + 8) as u64;
+        file.set_len(total_header_size + byte_size)?;
         // file.seek(io::SeekFrom::Start(0))?;
 
         file.write_all(&magic)?;
@@ -155,9 +155,9 @@ impl MmapBitVec {
         file.read_exact(&mut serialized_size)?;
         let size: u64 = u64::from_be(unsafe { transmute(serialized_size) });
 
-        let total_header_size = 2 + 2 + header_size + 8;
+        let total_header_size = (2 + 2 + header_size + 8) as u64;
         let byte_size = ((size - 1) >> 3) + 1;
-        if file.metadata()?.len() != total_header_size as u64 + byte_size {
+        if file.metadata()?.len() != total_header_size + byte_size {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!(
@@ -195,7 +195,7 @@ impl MmapBitVec {
         let file_size = metadata(&filename)?.len() as usize;
         let byte_size = file_size - offset;
         let f = OpenOptions::new().read(true).write(false).open(&filename)?;
-        let mmap = unsafe { MmapOptions::new().offset(offset).map(&f) }?;
+        let mmap = unsafe { MmapOptions::new().offset(offset as u64).map(&f) }?;
 
         Ok(MmapBitVec {
             mmap: CommonMmap::Mmap(mmap),
