@@ -1,6 +1,6 @@
+extern crate criterion;
 extern crate memmap;
 extern crate mmap_bitvec;
-extern crate criterion;
 
 use std::fs::OpenOptions;
 use std::mem::transmute;
@@ -9,7 +9,7 @@ use std::ops::Range;
 use memmap::{MmapMut, MmapOptions};
 use mmap_bitvec::{BitVector, MmapBitVec};
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 
 type BitVecSlice = u64;
 const BIT_VEC_SLICE_SIZE: u8 = 64;
@@ -152,7 +152,9 @@ fn bench_get_range_actual() {
 
 fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("get_range_actual", |b| b.iter(|| bench_get_range_actual()));
-    c.bench_function("get_range_simplified", |b| b.iter(|| bench_get_range_simplified()));
+    c.bench_function("get_range_simplified", |b| {
+        b.iter(|| bench_get_range_simplified())
+    });
     c.bench_function("get_range", |b| b.iter(|| bench_get_range()));
 }
 

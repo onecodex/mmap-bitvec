@@ -7,7 +7,7 @@ use std::path::Path;
 
 use memmap::{Mmap, MmapMut, MmapOptions};
 
-use bitvec::BitVector;
+use crate::bitvec::BitVector;
 
 /// Really annoying we have to mock over both of these rather than memmap
 /// just providing support.
@@ -642,7 +642,7 @@ mod test {
     use std::path::Path;
 
     use super::MmapBitVec;
-    use bitvec::BitVector;
+    use crate::bitvec::BitVector;
 
     #[test]
     fn test_bitvec() {
