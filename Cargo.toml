@@ -1,6 +1,6 @@
 [package]
 name = "mmap-bitvec"
-version = "0.3.0"
+version = "0.3.1"
 authors = ["Roderick Bovee <roderick@onecodex.com>"]
 autobenches = false
 edition = "2018"
