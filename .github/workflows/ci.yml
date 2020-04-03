@@ -25,5 +25,3 @@ jobs:
       run: rustc --version
     - name: Run tests
       run: cargo test
-    - name: Run tests with features
-      run: RUST_TEST_THREADS=1 cargo test --features marker_lookup
