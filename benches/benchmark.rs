@@ -7,7 +7,7 @@ use std::mem::transmute;
 use std::ops::Range;
 
 use memmap::{MmapMut, MmapOptions};
-use mmap_bitvec::{BitVector, MmapBitVec};
+use mmap_bitvec::{combinatorial::rank, BitVector, MmapBitVec};
 
 use criterion::{criterion_group, criterion_main, Criterion};
 

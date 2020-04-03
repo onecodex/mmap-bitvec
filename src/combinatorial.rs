@@ -1,86 +1,44 @@
+use once_cell::sync::Lazy;
+use std::collections::HashMap;
 use std::convert::TryFrom;
 
-#[cfg(feature = "rank_lookup")]
-const MARKER_TABLE_SIZE: usize = 200000;
-#[cfg(feature = "rank_lookup")]
-static mut MARKER_TABLE: [u128; MARKER_TABLE_SIZE] = [0; MARKER_TABLE_SIZE];
-#[cfg(feature = "rank_lookup")]
-static mut MARKER_BITS: u8 = 0;
+const MARKER_TABLE_SIZE: usize = 200_000;
 
-#[cfg(feature = "rank_lookup")]
-pub fn rank(value: usize, k: u8) -> u128 {
-    // note that you can only test this feature with
-    // `RUST_TEST_THREADS=1 cargo test` or else you'll get tons of
-    // errors because of data races between threads with different k's
-
-    unsafe {
-        // clear out the lookup table if we have a new k and fill
-        // it with values for the new k
-        if MARKER_BITS != k {
-            let mut table_size = MARKER_TABLE_SIZE;
-            if k == 1 {
-                table_size = 128;
-            } else if k == 2 {
-                table_size = 8128;
-            }
-            MARKER_TABLE = [0; MARKER_TABLE_SIZE];
-            MARKER_TABLE[0] = (1 << k) - 1;
-            for i in 1..table_size {
-                MARKER_TABLE[i] = next_rank(MARKER_TABLE[i - 1]);
-            }
-            MARKER_BITS = k;
+// TODO: replace with const fn when it is possible
+// (for and if are not allowed in const fn on current stable)
+static MARKER_TABLES: Lazy<HashMap<u8, Vec<u128>>> = Lazy::new(|| {
+    let mut m = HashMap::new();
+    for k in 1..10u8 {
+        let mut table = vec![0u128; MARKER_TABLE_SIZE];
+        let mut table_size = table.len();
+        if k == 1 {
+            table_size = 128;
+        } else if k == 2 {
+            table_size = 8128;
         }
-        // it's possible this may overflow if value > (128 choose k) or return
-        // a bad value (0) if value > (128 choose k) and k == 1 or 2
-        if value as usize >= MARKER_TABLE_SIZE {
-            let mut marker = MARKER_TABLE[MARKER_TABLE_SIZE - 1];
-            for _ in 0..(value as usize - MARKER_TABLE_SIZE) {
-                marker = next_rank(marker);
-            }
-            marker
-        } else {
-            MARKER_TABLE[value as usize]
+
+        table[0] = ((1 << k) - 1) as u128;
+        for i in 1..table_size {
+            table[i] = next_rank(table[i - 1]);
         }
+        m.insert(k, table);
     }
-}
+    m
+});
 
-#[cfg(not(feature = "rank_lookup"))]
 pub fn rank(value: usize, k: u8) -> u128 {
-    // set the appropriate number of bits in the marker
-    let mut marker = (1 << k) - 1 as u128;
-    // just step through `value` times until we find the marker we want
-    // (this could be speed up *a lot* with some kind of lookup table)
-    for _ in 0..value {
-        marker = next_rank(marker)
+    assert!(k > 0 && k < 10, "kappa needs to be less than 10");
+    // it's possible this may overflow if value > (128 choose k) or return
+    // a bad value (0) if value > (128 choose k) and k == 1 or 2
+    if value as usize >= MARKER_TABLE_SIZE {
+        let mut marker = MARKER_TABLES[&k][MARKER_TABLE_SIZE - 1];
+        for _ in 0..(value - MARKER_TABLE_SIZE) {
+            marker = next_rank(marker);
+        }
+        marker
+    } else {
+        MARKER_TABLES[&k][value]
     }
-    marker
-    // note that we could potentially calculate this much faster for larger ranks
-    // by analytically solving for the bit positions (see following for an example)
-    //
-    // this requires solving the equation `choose(x, n_bits) == rank` to find the
-    // first bit position (x) and then updating rank and n_bits and solving again
-
-    // from scipy.special import comb
-    //
-    // def rank(rank: int, bits: int) -> int:
-    //     cur_rank = rank
-    //     marker = 0
-    //     for i in range(bits, 0, -1):
-    //         # there's probably a better way to do this by skipping more values?
-    //         # maybe something with b < log_i(factorial(i) * cur_rank) + i + 1 ?
-    //         # (i think i inverted the binomial properly, but please check)
-    //
-    //         # (right now we use the fact that bit n has to be in at least the nth position)
-    //         b = bits
-    //         while comb(b, i) <= cur_rank:
-    //             b += 1
-    //         b -= 1
-    //         marker += 2**b
-    //         cur_rank -= comb(b, bits)
-    //     return marker
-    //
-    // assert rank(70, 2) == 4112  # 1000000010000
-    // assert rank(70, 3) == 304   # 100110000
 }
 
 pub fn unrank(marker: u128) -> usize {
@@ -143,6 +101,9 @@ pub fn choose(n: u64, k: u8) -> u64 {
 
 #[inline]
 fn next_rank(marker: u128) -> u128 {
+    if marker == 0 {
+        panic!("WOOPS");
+    }
     let t = marker | (marker - 1);
     (t + 1) | (((!t & (t + 1)) - 1) >> (marker.trailing_zeros() + 1))
 }
