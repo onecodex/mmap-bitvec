@@ -25,3 +25,5 @@ jobs:
       run: rustc --version
     - name: Run tests
       run: cargo test
+    - name: Run tests with features
+      run: cargo test --features=rank_lookup
