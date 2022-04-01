@@ -5,7 +5,7 @@ use std::mem::transmute;
 use std::ops::Range;
 use std::path::Path;
 
-use memmap::{Mmap, MmapMut, MmapOptions};
+use memmap2::{Mmap, MmapMut, MmapOptions};
 
 use crate::bitvec::BitVector;
 

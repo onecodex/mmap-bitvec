@@ -4,8 +4,10 @@ use std::convert::TryFrom;
 
 const MARKER_TABLE_SIZE: usize = 200_000;
 
+
 // TODO: replace with const fn when it is possible
 // (for and if are not allowed in const fn on current stable)
+// https://github.com/rust-lang/rust/issues/87575
 static MARKER_TABLES: Lazy<HashMap<u8, Vec<u128>>> = Lazy::new(|| {
     let mut m = HashMap::new();
     for k in 1..10u8 {
