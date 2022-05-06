@@ -25,7 +25,7 @@ pub trait BitVector {
     }
 
     fn get_range(&self, r: Range<usize>) -> u128 {
-        if r.end - r.start > 128usize {
+        if r.end - r.start > 128 {
             panic!("Range too large (>128)")
         } else if r.end > self.size() {
             panic!("Range ends outside of BitVec")
@@ -90,7 +90,7 @@ impl_bitvector!(u128, 128);
 
 impl BitVector for &[u8] {
     fn get(&self, i: usize) -> bool {
-        if i / 8 >= self.len() {
+        if i / 8 >= self.size() {
             panic!("Invalid bit vector index");
         }
         self[i / 8] >> (8 - i % 8) & 1 == 1

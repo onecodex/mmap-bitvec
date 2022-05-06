@@ -94,10 +94,10 @@ impl MmapBitVec {
         // file.seek(io::SeekFrom::Start(0))?;
 
         file.write_all(&magic)?;
-        let serialized_header_size: [u8; 2] = unsafe { transmute((header.len() as u16).to_be()) };
+        let serialized_header_size: [u8; 2] = (header.len() as u16).to_be_bytes();
         file.write_all(&serialized_header_size)?;
         file.write_all(header)?;
-        let serialized_size: [u8; 8] = unsafe { transmute((size as u64).to_be()) };
+        let serialized_size: [u8; 8] = (size as u64).to_be_bytes();
         file.write_all(&serialized_size)?;
 
         let mmap = unsafe { MmapOptions::new().offset(total_header_size).map_mut(&file) }?;
@@ -533,10 +533,7 @@ impl BitVector for MmapBitVec {
         // u64 is stored in the "right" order in memory
         let main_chunk = (x << (128 - size_main)).to_be();
 
-        let bytes: [u8; 16];
-        unsafe {
-            bytes = transmute(main_chunk);
-        }
+        let bytes: [u8; 16] = main_chunk.to_le_bytes();
         for (byte_idx, byte) in ((byte_idx_st + 1)..byte_idx_en).zip(bytes.iter()) {
             unsafe {
                 *mmap.add(byte_idx) |= *byte;
