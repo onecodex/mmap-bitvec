@@ -59,6 +59,7 @@ pub struct MmapBitVec {
     pub mmap: CommonMmap,
     pub size: usize,
     header: Box<[u8]>,
+    is_anon: bool,
 }
 
 impl MmapBitVec {
@@ -66,15 +67,12 @@ impl MmapBitVec {
     ///
     /// The overall size of bit vector (in bits) and a fixed-size header must
     /// also be provided (although the header can be 0-length).
-    pub fn create<P>(
+    pub fn create<P: AsRef<Path>>(
         filename: P,
         size: usize,
         magic: [u8; 2],
         header: &[u8],
-    ) -> Result<Self, io::Error>
-    where
-        P: AsRef<Path>,
-    {
+    ) -> Result<Self, io::Error> {
         assert!(
             header.len() < 65_536,
             "Headers longer than 65636 bytes not supported"
@@ -105,6 +103,7 @@ impl MmapBitVec {
             mmap: CommonMmap::MmapMut(mmap),
             size,
             header: header.to_vec().into_boxed_slice(),
+            is_anon: false,
         })
     }
 
@@ -182,6 +181,7 @@ impl MmapBitVec {
             mmap,
             size: size as usize,
             header: header.into_boxed_slice(),
+            is_anon: false,
         })
     }
 
@@ -201,6 +201,7 @@ impl MmapBitVec {
             mmap: CommonMmap::Mmap(mmap),
             size: byte_size * 8,
             header: Box::new([]),
+            is_anon: false,
         })
     }
 
@@ -215,7 +216,31 @@ impl MmapBitVec {
             mmap: CommonMmap::MmapMut(mmap),
             size,
             header: vec![].into_boxed_slice(),
+            is_anon: true,
         })
+    }
+
+    /// Converts an in-memory mmap bitvector to a file-backed one.
+    /// This is a no-op if the mmap is already file-backed.
+    /// Returns the new mmap after flushing.
+    pub fn into_mmap_file<P: AsRef<Path>>(
+        self,
+        filename: P,
+        magic: [u8; 2],
+        header: &[u8],
+    ) -> Result<Self, io::Error> {
+        if !self.is_anon {
+            return Ok(self);
+        }
+        let mut file_mmap = MmapBitVec::create(filename, self.size, magic, header)?;
+
+        // Not super efficient
+        for i in 0..self.size {
+            file_mmap.set(i, self.get(i));
+        }
+        file_mmap.mmap.flush()?;
+
+        Ok(file_mmap)
     }
 
     // Returns the header
@@ -779,5 +804,21 @@ mod test {
 
         assert_eq!(b.select(1, 0), Some(7));
         assert_eq!(b.select(3, 0), Some(127));
+    }
+
+    #[test]
+    fn can_convert_memory_to_file() {
+        let mut b = MmapBitVec::from_memory(128).unwrap();
+        b.set(7, true);
+        b.set(56, true);
+        b.set(127, true);
+        let dir = tempfile::tempdir().unwrap();
+        let f = b
+            .into_mmap_file(dir.path().join("test"), *b"!!", &[])
+            .unwrap();
+        assert_eq!(f.get(7), true);
+        assert_eq!(f.get(56), true);
+        assert_eq!(f.get(127), true);
+        assert_eq!(f.get(10), false);
     }
 }
