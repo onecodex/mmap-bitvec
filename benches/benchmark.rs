@@ -1,12 +1,12 @@
 extern crate criterion;
-extern crate memmap;
+extern crate memmap2;
 extern crate mmap_bitvec;
 
 use std::fs::OpenOptions;
 use std::mem::transmute;
 use std::ops::Range;
 
-use memmap::{MmapMut, MmapOptions};
+use memmap2::{MmapMut, MmapOptions};
 use mmap_bitvec::{combinatorial::rank, BitVector, MmapBitVec};
 
 use criterion::{criterion_group, criterion_main, Criterion};

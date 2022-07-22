@@ -10,13 +10,13 @@ jobs:
         build: [pinned, stable]
         include:
         - build: pinned
-          os: ubuntu-18.04
-          rust: 1.40.0
+          os: ubuntu-22.04
+          rust: 1.60.0
         - build: stable
-          os: ubuntu-18.04
+          os: ubuntu-22.04
           rust: stable
     steps:
-    - uses: actions/checkout@v1
+    - uses: actions/checkout@v3
     - name: Install Rust
       uses: hecrj/setup-rust-action@v1
       with:

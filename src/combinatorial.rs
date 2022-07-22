@@ -6,6 +6,7 @@ const MARKER_TABLE_SIZE: usize = 200_000;
 
 // TODO: replace with const fn when it is possible
 // (for and if are not allowed in const fn on current stable)
+// https://github.com/rust-lang/rust/issues/87575
 static MARKER_TABLES: Lazy<HashMap<u8, Vec<u128>>> = Lazy::new(|| {
     let mut m = HashMap::new();
     for k in 1..10u8 {
@@ -102,7 +103,7 @@ pub fn choose(n: u64, k: u8) -> u64 {
 #[inline]
 fn next_rank(marker: u128) -> u128 {
     if marker == 0 {
-        panic!("WOOPS");
+        unreachable!("WOOPS");
     }
     let t = marker | (marker - 1);
     (t + 1) | (((!t & (t + 1)) - 1) >> (marker.trailing_zeros() + 1))
