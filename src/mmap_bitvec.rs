@@ -12,11 +12,14 @@ use crate::bitvec::BitVector;
 /// Really annoying we have to mock over both of these rather than memmap
 /// just providing support.
 pub enum CommonMmap {
+    /// A mutable mmap
     MmapMut(MmapMut),
+    /// A read-only mmap
     Mmap(Mmap),
 }
 
 impl CommonMmap {
+    /// Get a non-mutable pointer to the mmap
     #[inline]
     pub fn as_ptr(&self) -> *const u8 {
         match self {
@@ -25,6 +28,7 @@ impl CommonMmap {
         }
     }
 
+    /// Get a mutable pointer to the mmap
     #[inline]
     pub fn as_mut_ptr(&mut self) -> *mut u8 {
         // maybe we should override the original type signature and return
@@ -35,6 +39,7 @@ impl CommonMmap {
         }
     }
 
+    /// Flush to disk. A no-op if the mmap is read-only
     #[inline]
     pub fn flush(&mut self) -> Result<(), io::Error> {
         match self {
@@ -56,7 +61,9 @@ impl CommonMmap {
 /// assert_eq!(bv.get_range(2..12), 0b1001101101);
 /// ```
 pub struct MmapBitVec {
+    /// The mmap we are using, either a mutable or read-only one
     pub mmap: CommonMmap,
+    /// Number of bits in the bitvector
     pub size: usize,
     header: Box<[u8]>,
     is_anon: bool,
@@ -243,7 +250,7 @@ impl MmapBitVec {
         Ok(file_mmap)
     }
 
-    // Returns the header
+    /// Returns the header
     pub fn header(&self) -> &[u8] {
         &self.header
     }

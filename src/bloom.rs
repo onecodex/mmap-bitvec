@@ -7,16 +7,18 @@ use murmurhash3::murmurhash3_x64_128;
 use crate::bitvec::BitVector;
 use crate::mmap_bitvec::MmapBitVec;
 
-// we don't want to use murmurhash3::Murmur3Hasher b/c it makes copies of the
-// bytes to be hashed with every single `hash` call
+/// Newtype for murmur hashing
+/// we don't want to use murmurhash3::Murmur3Hasher b/c it makes copies of the
+/// bytes to be hashed with every single `hash` call
 #[derive(Default)]
 pub struct MurmurHasher(u64, u64);
 
 impl MurmurHasher {
+    #[allow(missing_docs)]
     pub fn new() -> Self {
         MurmurHasher(0, 0)
     }
-
+    #[allow(missing_docs)]
     pub fn values(&self) -> (u64, u64) {
         (self.0, self.1)
     }

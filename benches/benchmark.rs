@@ -63,7 +63,7 @@ fn get_range_simplified(mmap: &MmapMut, size: usize, l: usize) -> BitVecSlice {
 
 fn get_range(mmap: &MmapMut, size: usize, r: Range<usize>) -> BitVecSlice {
     if r.end - r.start > BIT_VEC_SLICE_SIZE as usize {
-        panic!(format!("Range too large (>{})", BIT_VEC_SLICE_SIZE))
+        panic!("Range too large (>{})", BIT_VEC_SLICE_SIZE)
     } else if r.end > size {
         panic!("Range ends outside of BitVec")
     }
