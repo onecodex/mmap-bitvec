@@ -3,7 +3,7 @@ name = "mmap-bitvec"
 version = "0.4.0"
 authors = ["Roderick Bovee <roderick@onecodex.com>"]
 autobenches = false
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 memmap2 = "0.5"

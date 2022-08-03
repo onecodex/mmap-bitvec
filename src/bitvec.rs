@@ -1,14 +1,20 @@
 use std::ops::Range;
 
+/// A nasic bitvector trait that we implement for mmap
 pub trait BitVector {
+    /// Get the value at bit `i`
     fn get(&self, i: usize) -> bool;
+    /// Set the value at bit `i`
     fn set(&mut self, i: usize, x: bool);
+    /// Returns the size of the bitvector
     fn size(&self) -> usize;
 
+    /// Returns the number of bits sets in the given range
     fn rank(&self, r: Range<usize>) -> usize {
         r.fold(0, |a, x| a + if self.get(x) { 1 } else { 0 })
     }
 
+    /// Returns the position of the n-th bit set
     fn select(&self, n: usize, start: usize) -> Option<usize> {
         let mut bits_left = n;
 
@@ -24,6 +30,7 @@ pub trait BitVector {
         None
     }
 
+    /// Return all the bits in the given range as a u128
     fn get_range(&self, r: Range<usize>) -> u128 {
         if r.end - r.start > 128 {
             panic!("Range too large (>128)")
@@ -42,6 +49,7 @@ pub trait BitVector {
         bvs
     }
 
+    /// Sets all the bits in the given range from the given u128
     fn set_range(&mut self, r: Range<usize>, x: u128) {
         let mut cur = x;
         for i in r.rev() {
@@ -50,6 +58,7 @@ pub trait BitVector {
         }
     }
 
+    /// Sets all the bit in the given range to false
     fn clear_range(&mut self, r: Range<usize>) {
         for i in r.rev() {
             self.set(i, false);
@@ -128,5 +137,3 @@ impl BitVector for Vec<u8> {
         self.len() / 8
     }
 }
-
-// TODO: impl for `bv::BitVec` and `bit-vec::BitVec`?

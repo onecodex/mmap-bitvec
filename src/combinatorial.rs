@@ -27,6 +27,7 @@ static MARKER_TABLES: Lazy<HashMap<u8, Vec<u128>>> = Lazy::new(|| {
     m
 });
 
+/// https://en.wikipedia.org/wiki/Combinatorial_number_system
 pub fn rank(value: usize, k: u8) -> u128 {
     assert!(k > 0 && k < 10, "kappa needs to be less than 10");
     // it's possible this may overflow if value > (128 choose k) or return
@@ -42,6 +43,7 @@ pub fn rank(value: usize, k: u8) -> u128 {
     }
 }
 
+/// https://en.wikipedia.org/wiki/Combinatorial_number_system
 pub fn unrank(marker: u128) -> usize {
     // val = choose(rank(0), 1) + choose(rank(1), 2) + choose(rank(2), 3) + ...
     let mut working_marker = marker;
