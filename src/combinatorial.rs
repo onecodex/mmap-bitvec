@@ -11,12 +11,13 @@ static MARKER_TABLES: Lazy<HashMap<u8, Vec<u128>>> = Lazy::new(|| {
     let mut m = HashMap::new();
     for k in 1..10u8 {
         let mut table = vec![0u128; MARKER_TABLE_SIZE];
-        let mut table_size = table.len();
-        if k == 1 {
-            table_size = 128;
+        let table_size = if k == 1 {
+            128
         } else if k == 2 {
-            table_size = 8128;
-        }
+            8128
+        } else {
+            table.len()
+        };
 
         table[0] = ((1 << k) - 1) as u128;
         for i in 1..table_size {
@@ -34,7 +35,7 @@ pub fn rank(value: usize, k: u8) -> u128 {
     // a bad value (0) if value > (128 choose k) and k == 1 or 2
     if value as usize >= MARKER_TABLE_SIZE {
         let mut marker = MARKER_TABLES[&k][MARKER_TABLE_SIZE - 1];
-        for _ in 0..(value - MARKER_TABLE_SIZE) {
+        for _ in 1..(value - MARKER_TABLE_SIZE) {
             marker = next_rank(marker);
         }
         marker
@@ -105,7 +106,7 @@ pub fn choose(n: u64, k: u8) -> u64 {
 #[inline]
 fn next_rank(marker: u128) -> u128 {
     if marker == 0 {
-        unreachable!("WOOPS");
+        unreachable!("Got next_rank called with marker == 0");
     }
     let t = marker | (marker - 1);
     (t + 1) | (((!t & (t + 1)) - 1) >> (marker.trailing_zeros() + 1))
