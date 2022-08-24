@@ -47,6 +47,15 @@ impl CommonMmap {
             CommonMmap::Mmap(_) => Ok(()),
         }
     }
+
+    /// Gets the slice
+    #[inline]
+    pub fn as_slice(&self) -> &[u8] {
+        match self {
+            CommonMmap::MmapMut(x) => x.as_ref(),
+            CommonMmap::Mmap(x) => x.as_ref(),
+        }
+    }
 }
 
 /// Bit vector backed by a mmap-ed file
@@ -69,6 +78,32 @@ pub struct MmapBitVec {
     is_anon: bool,
 }
 
+fn create_bitvec_file(
+    filename: &Path,
+    size: usize,
+    magic: [u8; 2],
+    header: &[u8],
+) -> Result<(std::fs::File, u64), io::Error> {
+    let byte_size = ((size - 1) >> 3) as u64 + 1;
+    let mut file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(filename)?;
+    // two magic bytes, u16 header length, header, u64 bitvec length, bitvec
+    let total_header_size = (2 + 2 + header.len() + 8) as u64;
+    file.set_len(total_header_size + byte_size)?;
+
+    file.write_all(&magic)?;
+    let serialized_header_size: [u8; 2] = (header.len() as u16).to_be_bytes();
+    file.write_all(&serialized_header_size)?;
+    file.write_all(header)?;
+    let serialized_size: [u8; 8] = (size as u64).to_be_bytes();
+    file.write_all(&serialized_size)?;
+
+    Ok((file, total_header_size))
+}
+
 impl MmapBitVec {
     /// Creates a new `MmapBitVec` file
     ///
@@ -85,26 +120,7 @@ impl MmapBitVec {
             "Headers longer than 65636 bytes not supported"
         );
 
-        let byte_size = ((size - 1) >> 3) as u64 + 1;
-        // if we're creating the file, we need to make sure it's bug enough for our
-        // purposes (memmap doesn't automatically size the file)
-        let mut file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .open(filename)?;
-        // two magic bytes, u16 header length, header, u64 bitvec length, bitvec
-        let total_header_size = (2 + 2 + header.len() + 8) as u64;
-        file.set_len(total_header_size + byte_size)?;
-        // file.seek(io::SeekFrom::Start(0))?;
-
-        file.write_all(&magic)?;
-        let serialized_header_size: [u8; 2] = (header.len() as u16).to_be_bytes();
-        file.write_all(&serialized_header_size)?;
-        file.write_all(header)?;
-        let serialized_size: [u8; 8] = (size as u64).to_be_bytes();
-        file.write_all(&serialized_size)?;
-
+        let (file, total_header_size) = create_bitvec_file(filename.as_ref(), size, magic, header)?;
         let mmap = unsafe { MmapOptions::new().offset(total_header_size).map_mut(&file) }?;
         Ok(MmapBitVec {
             mmap: CommonMmap::MmapMut(mmap),
@@ -227,27 +243,21 @@ impl MmapBitVec {
         })
     }
 
-    /// Converts an in-memory mmap bitvector to a file-backed one.
+    /// Save in-memory mmap bitvector to disk.
     /// This is a no-op if the mmap is already file-backed.
-    /// Returns the new mmap after flushing.
-    pub fn into_mmap_file<P: AsRef<Path>>(
-        self,
+    pub fn save_to_disk<P: AsRef<Path>>(
+        &self,
         filename: P,
         magic: [u8; 2],
         header: &[u8],
-    ) -> Result<Self, io::Error> {
+    ) -> Result<(), io::Error> {
         if !self.is_anon {
-            return Ok(self);
+            return Ok(());
         }
-        let mut file_mmap = MmapBitVec::create(filename, self.size, magic, header)?;
-
-        // Not super efficient
-        for i in 0..self.size {
-            file_mmap.set(i, self.get(i));
-        }
-        file_mmap.mmap.flush()?;
-
-        Ok(file_mmap)
+        let (mut file, _) = create_bitvec_file(filename.as_ref(), self.size, magic, header)?;
+        // We should already be at the right byte to write the content
+        file.write_all(self.mmap.as_slice())?;
+        Ok(())
     }
 
     /// Returns the header
@@ -814,15 +824,17 @@ mod test {
     }
 
     #[test]
-    fn can_convert_memory_to_file() {
+    fn can_write_anon_mmap_to_disk() {
         let mut b = MmapBitVec::from_memory(128).unwrap();
+        b.set(0, true);
         b.set(7, true);
         b.set(56, true);
         b.set(127, true);
         let dir = tempfile::tempdir().unwrap();
-        let f = b
-            .into_mmap_file(dir.path().join("test"), *b"!!", &[])
+        b.save_to_disk(dir.path().join("test"), *b"!!", &[])
             .unwrap();
+        let f = MmapBitVec::open(dir.path().join("test"), Some(b"!!"), false).unwrap();
+        assert_eq!(f.get(0), true);
         assert_eq!(f.get(7), true);
         assert_eq!(f.get(56), true);
         assert_eq!(f.get(127), true);
