@@ -150,12 +150,23 @@ fn bench_get_range_actual() {
     }
 }
 
+fn bench_save_to_disk(bv: &MmapBitVec) {
+    bv.save_to_disk("hello.tmp", [0, 1], &[]).unwrap();
+}
+
 fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("get_range_actual", |b| b.iter(|| bench_get_range_actual()));
     c.bench_function("get_range_simplified", |b| {
         b.iter(|| bench_get_range_simplified())
     });
     c.bench_function("get_range", |b| b.iter(|| bench_get_range()));
+    c.bench_function("save_to_disk", |b| {
+        let mut bitvec = MmapBitVec::from_memory(1_000_000_000).unwrap();
+        for i in 0..1_000_000_000 {
+            bitvec.set(i, true);
+        }
+        b.iter(|| bench_save_to_disk(&bitvec))
+    });
 }
 
 criterion_group!(benches, criterion_benchmark);

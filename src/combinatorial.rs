@@ -36,7 +36,7 @@ pub fn rank(value: usize, k: u8) -> u128 {
     if value as usize >= MARKER_TABLE_SIZE {
         let mut marker = MARKER_TABLES[&k][MARKER_TABLE_SIZE - 1];
         for _ in 0..(value - MARKER_TABLE_SIZE) {
-            // next_rank would underflow if we pass 0, we return it instead
+            // next_rank would overflow if we pass 0, we return it instead
             if marker == 0 {
                 return marker;
             }
