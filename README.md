@@ -2,7 +2,7 @@
 
 ![ci](https://github.com/onecodex/mmap-bitvec/workflows/ci/badge.svg)
 
-mmap-bitvec is a library for working with mmap-backed bit-vectors and some simple
+`mmap-bitvec` is a library for working with bit-vectors backed by memory-mapped files and some simple
 data structures derived from bit-vectors.
 
 ## Benchmarks

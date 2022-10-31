@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-/// A nasic bitvector trait that we implement for mmap
+/// A basic bitvector trait that we implement for mmap
 pub trait BitVector {
     /// Get the value at bit `i`
     fn get(&self, i: usize) -> bool;
@@ -14,7 +14,7 @@ pub trait BitVector {
         r.fold(0, |a, x| a + if self.get(x) { 1 } else { 0 })
     }
 
-    /// Returns the position of the n-th bit set
+    /// Returns the position of the n-th set bit
     fn select(&self, n: usize, start: usize) -> Option<usize> {
         let mut bits_left = n;
 
@@ -30,7 +30,7 @@ pub trait BitVector {
         None
     }
 
-    /// Return all the bits in the given range as a u128
+    /// Return all the bits in the given range as a `u128`
     fn get_range(&self, r: Range<usize>) -> u128 {
         if r.end - r.start > 128 {
             panic!("Range too large (>128)")
@@ -49,7 +49,7 @@ pub trait BitVector {
         bvs
     }
 
-    /// Sets all the bits in the given range from the given u128
+    /// Sets all the bits in the given range from the given `u128`
     fn set_range(&mut self, r: Range<usize>, x: u128) {
         let mut cur = x;
         for i in r.rev() {

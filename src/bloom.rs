@@ -7,9 +7,9 @@ use murmurhash3::murmurhash3_x64_128;
 use crate::bitvec::BitVector;
 use crate::mmap_bitvec::MmapBitVec;
 
-/// Newtype for murmur hashing
-/// we don't want to use murmurhash3::Murmur3Hasher b/c it makes copies of the
-/// bytes to be hashed with every single `hash` call
+/// Newtype for murmur hashing.
+/// We don't use murmurhash3::Murmur3Hasher because it makes copies of the
+/// bytes to be hashed on every `hash` call
 #[derive(Default)]
 pub struct MurmurHasher(u64, u64);
 
@@ -30,7 +30,7 @@ impl Hasher for MurmurHasher {
         let hash = murmurhash3_x64_128(bytes, self.0);
         *self = MurmurHasher(hash.0, hash.1);
     }
-    // have to provide this to fulfill the trait requirements
+
     fn finish(&self) -> u64 {
         self.0
     }
@@ -43,10 +43,10 @@ pub struct BloomFilter {
 }
 
 impl BloomFilter {
-    /// Creates a new Bloom filter (or opens an existing one, if the file
-    /// already exists) of a given size (bits) and with a given number of
-    /// hash functions for each insert (n_hashes). If a filename is not
-    /// passed, the Bloom filter will be created in memory.
+    /// Creates a new `BloomFilter` (or opens an existing one, if the file
+    /// already exists) of a given size (in bits) and with a given number of
+    /// hash functions for each insert (`n_hashes`). If a filename is not
+    /// passed, the bloom filter will be created in memory.
     pub fn new<P>(filename: Option<P>, bits: usize, n_hashes: u8) -> Result<Self, io::Error>
     where
         P: AsRef<Path>,

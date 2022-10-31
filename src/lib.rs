@@ -8,8 +8,6 @@
 pub mod bitvec;
 /// A simple implementation of a Bloom filter backed by `BitVec`
 pub mod bloom;
-/// Some combinatorial utilities
-pub mod combinatorial;
 /// All the utilities to interact with a mmapped bitvector
 pub mod mmap_bitvec;
 
