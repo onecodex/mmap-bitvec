@@ -27,7 +27,7 @@ Using a memory-mapped bit-vector:
 Using the bloom filter:
 ```rust,no_run
     use mmap_bitvec::{BloomFilter};
-    // Create a bloom filter called with a capacity of 100 bits that uses 2 has functions on each insert.
+    // Create a bloom filter called with a capacity of 100 bits that uses 2 hash functions on each insert.
     let mut filter = BloomFilter::new(Some("./test.bloom"), 100, 2).unwrap();
     let (a, b) = (1, 2);
     assert!(!filter.contains(a));
