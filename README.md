@@ -2,7 +2,7 @@
 
 ![ci](https://github.com/onecodex/mmap-bitvec/workflows/ci/badge.svg)
 
-`mmap-bitvec` is a library for working with bit-vectors backed by memory-mapped files. Included is a simple bloom filter built on top of such bit-vectors.
+`mmap-bitvec` is a library for working with bit-vectors backed by memory-mapped files. Included is a simple Bloom filter built on top of such bit-vectors.
 
 ## Examples
 
@@ -24,10 +24,10 @@ Using a memory-mapped bit-vector:
     assert_eq!(f.get(2), true);
 ```
 
-Using the bloom filter:
+Using the Bloom filter:
 ```rust,no_run
     use mmap_bitvec::{BloomFilter};
-    // Create a bloom filter with a capacity of 100 bits that uses 2 hash functions on each insert.
+    // Create a Bloom filter with a capacity of 100 bits that uses 2 hash functions on each insert.
     let mut filter = BloomFilter::new(Some("./test.bloom"), 100, 2).unwrap();
     let (a, b) = (1, 2);
     assert!(!filter.contains(a));

@@ -74,10 +74,10 @@ pub struct MmapBitVec {
     pub mmap: MmapKind,
     /// Number of bits in the bitvector
     pub size: usize,
-    // TODO: fixed size header consisting of...?
+    /// Arbitrary data prepended to file (when file-backed)
     header: Box<[u8]>,
-    // TODO: what does this mean? that it's not / will never be file-backed?
-    is_anon: bool,
+    /// controls whether the mapping is backed by a file (see `MAP_ANONYMOUS` here: https://man7.org/linux/man-pages/man2/mmap.2.html)
+    is_map_anonymous: bool,
 }
 
 fn create_bitvec_file(
@@ -92,8 +92,8 @@ fn create_bitvec_file(
         .write(true)
         .create(true)
         .open(filename)?;
-    // two magic bytes, u16 header length, header, u64 bitvec length, bitvec
-    let total_header_size = (2 + 2 + header.len() + 8) as u64;
+    // two magic bytes indicating file type, u16 header length, header, u64 bitvec length, bitvec
+    let total_header_size = (magic.len() + 2 + header.len() + 8) as u64;
     file.set_len(total_header_size + byte_size)?;
 
     file.write_all(&magic)?;
@@ -128,14 +128,13 @@ impl MmapBitVec {
             mmap: MmapKind::MmapMut(mmap),
             size,
             header: header.to_vec().into_boxed_slice(),
-            is_anon: false,
+            is_map_anonymous: false,
         })
     }
 
     /// Opens an existing `MmapBitVec` file
     ///
-    /// TODO: explanation of magic bytes somewhere
-    /// If magic bytes are passed, they are checked against the file.
+    /// If magic bytes are passed to indicate file type, they are checked against the file.
     ///
     /// The header size must be specified (as it isn't stored in the file to
     /// allow the magic bytes to be set) and there is an optional `read_only`
@@ -206,7 +205,7 @@ impl MmapBitVec {
             mmap,
             size: size as usize,
             header: header.into_boxed_slice(),
-            is_anon: false,
+            is_map_anonymous: false,
         })
     }
 
@@ -226,11 +225,11 @@ impl MmapBitVec {
             mmap: MmapKind::Mmap(mmap),
             size: byte_size * 8,
             header: Box::new([]),
-            is_anon: false,
+            is_map_anonymous: false,
         })
     }
 
-    /// Creates a `MmapBitVec` backed by memory.
+    /// Creates an in-memory  `MmapBitVec` (not backed by a file).
     ///
     /// Note that unlike the `create` and `open` no header is set.
     /// The MmapBitVec is also read/write by default.
@@ -241,7 +240,7 @@ impl MmapBitVec {
             mmap: MmapKind::MmapMut(mmap),
             size,
             header: vec![].into_boxed_slice(),
-            is_anon: true,
+            is_map_anonymous: true,
         })
     }
 
@@ -253,7 +252,7 @@ impl MmapBitVec {
         magic: [u8; 2],
         header: &[u8],
     ) -> Result<(), io::Error> {
-        if !self.is_anon {
+        if !self.is_map_anonymous {
             return Ok(());
         }
         let (mut file, _) = create_bitvec_file(filename.as_ref(), self.size, magic, header)?;
@@ -331,7 +330,6 @@ impl MmapBitVec {
         };
         let byte_idx_en = ((r.end - 1) >> 3) as usize;
 
-        // TODO: note for review: does it make sense for the set_* ops to be a no-op on read-only mmaps (like flush)? or just keep it panicking?
         let mmap: *mut u8 = self
             .mmap
             .as_mut_ptr()

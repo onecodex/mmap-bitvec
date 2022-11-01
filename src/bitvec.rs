@@ -30,7 +30,10 @@ pub trait BitVector {
         None
     }
 
-    /// Return all the bits in the given range as a `u128`
+    /// Return all the bits in the given range as a `u128`. The input range `r` must span `<= 128`,
+    /// as the result is bitpacked into a `u128`.
+    ///
+    /// For example, an input range of `(0, 7)` will set the first 8 bits of the returned `u128` to the result of `self.get(0, 1, ... 7)`.
     fn get_range(&self, r: Range<usize>) -> u128 {
         if r.end - r.start > 128 {
             panic!("Range too large (>128)")

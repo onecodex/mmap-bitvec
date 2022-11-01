@@ -46,7 +46,7 @@ impl BloomFilter {
     /// Creates a new `BloomFilter` (or opens an existing one, if the file
     /// already exists) of a given size (in bits) and with a given number of
     /// hash functions for each insert (`n_hashes`). If a filename is not
-    /// passed, the bloom filter will be created in memory.
+    /// passed, the Bloom filter will be created in memory.
     pub fn new<P>(filename: Option<P>, bits: usize, n_hashes: u8) -> Result<Self, io::Error>
     where
         P: AsRef<Path>,
@@ -68,7 +68,7 @@ impl BloomFilter {
         })
     }
 
-    /// Insert an item into the bloom filter.
+    /// Insert an item into the Bloom filter.
     pub fn insert<H>(&mut self, item: H)
     where
         H: Hash,
@@ -82,7 +82,7 @@ impl BloomFilter {
         }
     }
 
-    /// Check if an item is in the bloom filter already.
+    /// Check if an item is in the Bloom filter already.
     pub fn contains<H>(&self, item: H) -> bool
     where
         H: Hash,
