@@ -211,7 +211,6 @@ impl MmapBitVec {
 
     /// Opens a `MmapBitVec` file that doesn't have our "standard" file header format
     /// TODO: what is the standard file header? if we put in the docstring on the struct we can say to refer to that here
-    ///  Useful for opening legacy bitvec formats.
     pub fn open_no_header<P>(filename: P, offset: usize) -> Result<Self, io::Error>
     where
         P: AsRef<Path>,
@@ -481,7 +480,7 @@ impl BitVector for MmapBitVec {
     ///
     /// Explicitly panics if the end location, `r.end`, is outside the bounds
     /// of the bit vector or if the range specified is greater than 128 bits.
-    /// (Use `get_range` instead if you need to read larger chunks) A panic
+    /// (Use `get_range_bytes` instead if you need to read larger chunks) A panic
     /// will also occur when `r.start` is greater than `r.end`.
     fn get_range(&self, r: Range<usize>) -> u128 {
         if r.end - r.start > 128usize {
@@ -504,9 +503,6 @@ impl BitVector for MmapBitVec {
         v >>= 7 - ((r.end - 1) & 7);
 
         if r.start < self.size - 128usize {
-            // unsafe justification: reading a u64/u128 out instead of doing it
-            // byte-wise --- also does not work with legacy mode!!!
-            // TODO: ^ what is legacy mode? should rewrite / delete this line depending on what legacy mode is
             unsafe {
                 // we have to transmute since we don't know if it's a u64 or u128
                 #[allow(clippy::transmute_ptr_to_ptr)]
