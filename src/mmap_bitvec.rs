@@ -83,9 +83,11 @@ pub struct MmapBitVec {
 fn create_bitvec_file(
     filename: &Path,
     size: usize,
-    magic: [u8; 2],
+    magic: Option<[u8; 2]>,
     header: &[u8],
 ) -> Result<(std::fs::File, u64), io::Error> {
+    let file_magic = if let Some(m) = magic { m } else { [0; 2] };
+
     let byte_size = ((size - 1) >> 3) as u64 + 1;
     let mut file = OpenOptions::new()
         .read(true)
@@ -93,10 +95,10 @@ fn create_bitvec_file(
         .create(true)
         .open(filename)?;
     // two magic bytes indicating file type, u16 header length, header, u64 bitvec length, bitvec
-    let total_header_size = (magic.len() + 2 + header.len() + 8) as u64;
+    let total_header_size = (file_magic.len() + 2 + header.len() + 8) as u64;
     file.set_len(total_header_size + byte_size)?;
 
-    file.write_all(&magic)?;
+    file.write_all(&file_magic)?;
     let serialized_header_size: [u8; 2] = (header.len() as u16).to_be_bytes();
     file.write_all(&serialized_header_size)?;
     file.write_all(header)?;
@@ -114,7 +116,7 @@ impl MmapBitVec {
     pub fn create<P: AsRef<Path>>(
         filename: P,
         size: usize,
-        magic: [u8; 2],
+        magic: Option<[u8; 2]>,
         header: &[u8],
     ) -> Result<Self, io::Error> {
         assert!(
@@ -248,7 +250,7 @@ impl MmapBitVec {
     pub fn save_to_disk<P: AsRef<Path>>(
         &self,
         filename: P,
-        magic: [u8; 2],
+        magic: Option<[u8; 2]>,
         header: &[u8],
     ) -> Result<(), io::Error> {
         if !self.is_map_anonymous {
@@ -663,7 +665,7 @@ mod test {
         use std::fs::remove_file;
 
         let header = vec![];
-        let mut b = MmapBitVec::create("./test", 100, *b"!!", &header).unwrap();
+        let mut b = MmapBitVec::create("./test", 100, None, &header).unwrap();
         b.set(2, true);
         assert!(!b.get(1));
         assert!(b.get(2));
@@ -671,7 +673,7 @@ mod test {
         drop(b);
         assert!(Path::new("./test").exists());
 
-        let b = MmapBitVec::open("./test", Some(b"!!"), true).unwrap();
+        let b = MmapBitVec::open("./test", None, true).unwrap();
         assert!(!b.get(1));
         assert!(b.get(2));
         assert!(!b.get(100));
@@ -686,7 +688,7 @@ mod test {
         let header = vec![];
         // the bitvector has to be a size with a multiple of 8 because the
         // no_header code always opens to the end of the last byte
-        let _ = MmapBitVec::create("./test_headerless", 80, *b"!!", &header).unwrap();
+        let _ = MmapBitVec::create("./test_headerless", 80, None, &header).unwrap();
         assert!(Path::new("./test_headerless").exists());
         let b = MmapBitVec::open_no_header("./test_headerless", 12).unwrap();
         assert_eq!(b.size(), 80);
@@ -843,9 +845,8 @@ mod test {
         b.set(56, true);
         b.set(127, true);
         let dir = tempfile::tempdir().unwrap();
-        b.save_to_disk(dir.path().join("test"), *b"!!", &[])
-            .unwrap();
-        let f = MmapBitVec::open(dir.path().join("test"), Some(b"!!"), false).unwrap();
+        b.save_to_disk(dir.path().join("test"), None, &[]).unwrap();
+        let f = MmapBitVec::open(dir.path().join("test"), None, false).unwrap();
         assert_eq!(f.get(0), true);
         assert_eq!(f.get(7), true);
         assert_eq!(f.get(56), true);

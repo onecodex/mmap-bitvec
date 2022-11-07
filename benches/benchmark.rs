@@ -146,7 +146,7 @@ fn bench_get_range_actual() {
 }
 
 fn bench_save_to_disk(bv: &MmapBitVec) {
-    bv.save_to_disk("hello.tmp", [0, 1], &[]).unwrap();
+    bv.save_to_disk("hello.tmp", Some([0, 1]), &[]).unwrap();
 }
 
 fn criterion_benchmark(c: &mut Criterion) {

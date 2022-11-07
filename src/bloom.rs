@@ -57,7 +57,7 @@ impl BloomFilter {
                 if Path::exists(filename.as_ref()) {
                     MmapBitVec::open(&filename, Some(b"!!"), false)?
                 } else {
-                    MmapBitVec::create(&filename, bits, *b"!!", &header)?
+                    MmapBitVec::create(&filename, bits, Some(*b"!!"), &header)?
                 }
             }
             None => MmapBitVec::from_memory(bits)?,

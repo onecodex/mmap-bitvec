@@ -16,11 +16,11 @@ Using a memory-mapped bit-vector:
     assert!(bitvec.get(2));
     assert_eq!(bitvec.get_range(0..8), 0b00100000);
 
-    // Write the bit-vector to disk
+    // Write the bit-vector to disk, passing in `None` where an optional magic bytes arg can be set
     let dir = tempfile::tempdir().unwrap();
-    bitvec.save_to_disk(dir.path().join("test"), *b"!!", &[])
+    bitvec.save_to_disk(dir.path().join("test"), None, &[])
         .unwrap();
-    let f = MmapBitVec::open(dir.path().join("test"), Some(b"!!"), false).unwrap();
+    let f = MmapBitVec::open(dir.path().join("test"), None, false).unwrap();
     assert_eq!(f.get(2), true);
 ```
 
