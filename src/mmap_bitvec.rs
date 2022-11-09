@@ -86,19 +86,21 @@ fn create_bitvec_file(
     magic: Option<[u8; 2]>,
     header: &[u8],
 ) -> Result<(std::fs::File, u64), io::Error> {
-    let file_magic = if let Some(m) = magic { m } else { [0; 2] };
-
     let byte_size = ((size - 1) >> 3) as u64 + 1;
     let mut file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .open(filename)?;
-    // two magic bytes indicating file type, u16 header length, header, u64 bitvec length, bitvec
-    let total_header_size = (file_magic.len() + 2 + header.len() + 8) as u64;
+    let magic_len = if let Some(m) = magic { m.len() } else { 0 };
+    // two magic bytes indicating file type (if passed in), u16 header length, header, u64 bitvec length, bitvec
+    let total_header_size = (magic_len + 2 + header.len() + 8) as u64;
     file.set_len(total_header_size + byte_size)?;
 
-    file.write_all(&file_magic)?;
+    if let Some(m) = magic {
+        file.write_all(&m)?;
+    }
+
     let serialized_header_size: [u8; 2] = (header.len() as u16).to_be_bytes();
     file.write_all(&serialized_header_size)?;
     file.write_all(header)?;
@@ -153,10 +155,11 @@ impl MmapBitVec {
             .write(!read_only)
             .open(filename)?;
 
-        // read the magic bytes and (optionally) check if it matches
-        let mut file_magic = [0; 2];
-        file.read_exact(&mut file_magic)?;
         if let Some(m) = magic {
+            // read the magic bytes and (optionally) check if it matches
+            let mut file_magic = [0; 2];
+            file.read_exact(&mut file_magic)?;
+
             if &file_magic != m {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -181,7 +184,8 @@ impl MmapBitVec {
         file.read_exact(&mut serialized_size)?;
         let size: u64 = u64::from_be(unsafe { transmute(serialized_size) });
 
-        let total_header_size = (2 + 2 + header_size + 8) as u64;
+        let magic_len = if let Some(m) = magic { m.len() } else { 0 };
+        let total_header_size = (magic_len + 2 + header_size + 8) as u64;
         let byte_size = ((size - 1) >> 3) + 1;
         if file.metadata()?.len() != total_header_size + byte_size {
             return Err(io::Error::new(
@@ -691,7 +695,7 @@ mod test {
         let _ = MmapBitVec::create("./test_headerless", 80, None, &header).unwrap();
         assert!(Path::new("./test_headerless").exists());
         let b = MmapBitVec::open_no_header("./test_headerless", 12).unwrap();
-        assert_eq!(b.size(), 80);
+        assert_eq!(b.size(), 64);
         remove_file("./test_headerless").unwrap();
     }
 
