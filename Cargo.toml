@@ -2,8 +2,15 @@
 name = "mmap-bitvec"
 version = "0.4.0"
 authors = ["Roderick Bovee <roderick@onecodex.com>"]
+description = "A library for working with bit-vectors backed by memory-mapped files"
+keywords = ["bitvec", "bitvector", "bioinformatics"]
+categories = ["science", "data-structures"]
 autobenches = false
 edition = "2021"
+readme = "./README.md"
+license = "MIT"
+repository = "https://github.com/onecodex/mmap-bitvec"
+
 
 [dependencies]
 memmap2 = "0.5"
