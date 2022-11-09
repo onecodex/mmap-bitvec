@@ -2,21 +2,44 @@
 
 ![ci](https://github.com/onecodex/mmap-bitvec/workflows/ci/badge.svg)
 
-mmap-bitvec is a library for working with mmap-backed bit-vectors and some simple
-data structures derived from bit-vectors.
+`mmap-bitvec` is a library for working with bit-vectors backed by memory-mapped files. Included is a simple Bloom filter built on top of such bit-vectors.
 
-## Benchmarks
+## Examples
 
-To run benchmarks you need to download a bfield.mmap file, I used `s3://refgenomics-datafiles/dbs/mg_targeted_loci_20160517/bfield.mmap` in
-the root of the repo and then run `cargo +nightly bench`.
-
-## Example
-
+Using a memory-mapped bit-vector:
 ```rust
-    let mut b = BitVec::from_memory(128).unwrap();
+    // Build an in-memory bit-vector with a capacity of 128 bits.
+    use mmap_bitvec::{MmapBitVec, BitVector};
 
-    b.set(2, true);
-    assert!(b.get(2));
-    assert_eq!(b.get_range(0..8), 0b00100000);
+    let mut bitvec = MmapBitVec::from_memory(128).unwrap();
+    bitvec.set(2, true);
+    assert!(bitvec.get(2));
+    assert_eq!(bitvec.get_range(0..8), 0b00100000);
+
+    // Write the bit-vector to disk, passing in `None` where an optional magic bytes arg can be set
+    let dir = tempfile::tempdir().unwrap();
+    bitvec.save_to_disk(dir.path().join("test"), None, &[])
+        .unwrap();
+    let f = MmapBitVec::open(dir.path().join("test"), None, false).unwrap();
+    assert_eq!(f.get(2), true);
 ```
 
+Using the Bloom filter:
+```rust,no_run
+    use mmap_bitvec::{BloomFilter};
+    // Create a Bloom filter with a capacity of 100 bits that uses 2 hash functions on each insert.
+    let mut filter = BloomFilter::new(Some("./test.bloom"), 100, 2).unwrap();
+    let (a, b) = (1, 2);
+    assert!(!filter.contains(a));
+    assert!(!filter.contains(b));
+
+    filter.insert(b);
+    assert!(!filter.contains(a));
+    assert!(filter.contains(b));
+```
+
+## License
+
+This project is licensed under the [MIT license].
+
+[MIT license]: https://github.com/onecodex/mmap-bitvec/blob/master/LICENSE

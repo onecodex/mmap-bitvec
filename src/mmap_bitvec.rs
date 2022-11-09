@@ -9,33 +9,33 @@ use memmap2::{Mmap, MmapMut, MmapOptions};
 
 use crate::bitvec::BitVector;
 
-/// Really annoying we have to mock over both of these rather than memmap
-/// just providing support.
-pub enum CommonMmap {
+/// Enum representing either a read-only mmap or a mutable mmap
+pub enum MmapKind {
     /// A mutable mmap
     MmapMut(MmapMut),
     /// A read-only mmap
     Mmap(Mmap),
 }
 
-impl CommonMmap {
+impl MmapKind {
     /// Get a non-mutable pointer to the mmap
     #[inline]
     pub fn as_ptr(&self) -> *const u8 {
         match self {
-            CommonMmap::MmapMut(x) => x.as_ptr(),
-            CommonMmap::Mmap(x) => x.as_ptr(),
+            MmapKind::MmapMut(x) => x.as_ptr(),
+            MmapKind::Mmap(x) => x.as_ptr(),
         }
     }
 
     /// Get a mutable pointer to the mmap
     #[inline]
-    pub fn as_mut_ptr(&mut self) -> *mut u8 {
-        // maybe we should override the original type signature and return
-        // a Result<*mut u8, io::Error> here with the read-only failure?
+    pub fn as_mut_ptr(&mut self) -> Result<*mut u8, io::Error> {
         match self {
-            CommonMmap::MmapMut(x) => x.as_mut_ptr(),
-            CommonMmap::Mmap(_) => panic!("Attempted writing a read-only mmap"),
+            MmapKind::MmapMut(x) => Ok(x.as_mut_ptr()),
+            MmapKind::Mmap(_) => Err(io::Error::new(
+                io::ErrorKind::Other,
+                "attempted to get a mutable pointer to a read-only mmap",
+            )),
         }
     }
 
@@ -43,8 +43,8 @@ impl CommonMmap {
     #[inline]
     pub fn flush(&mut self) -> Result<(), io::Error> {
         match self {
-            CommonMmap::MmapMut(x) => x.flush(),
-            CommonMmap::Mmap(_) => Ok(()),
+            MmapKind::MmapMut(x) => x.flush(),
+            MmapKind::Mmap(_) => Ok(()),
         }
     }
 
@@ -52,8 +52,8 @@ impl CommonMmap {
     #[inline]
     pub fn as_slice(&self) -> &[u8] {
         match self {
-            CommonMmap::MmapMut(x) => x.as_ref(),
-            CommonMmap::Mmap(x) => x.as_ref(),
+            MmapKind::MmapMut(x) => x.as_ref(),
+            MmapKind::Mmap(x) => x.as_ref(),
         }
     }
 }
@@ -71,17 +71,19 @@ impl CommonMmap {
 /// ```
 pub struct MmapBitVec {
     /// The mmap we are using, either a mutable or read-only one
-    pub mmap: CommonMmap,
+    pub mmap: MmapKind,
     /// Number of bits in the bitvector
     pub size: usize,
+    /// Arbitrary data prepended to file (when file-backed)
     header: Box<[u8]>,
-    is_anon: bool,
+    /// controls whether the mapping is backed by a file (see `MAP_ANONYMOUS` here: https://man7.org/linux/man-pages/man2/mmap.2.html)
+    is_map_anonymous: bool,
 }
 
 fn create_bitvec_file(
     filename: &Path,
     size: usize,
-    magic: [u8; 2],
+    magic: Option<[u8; 2]>,
     header: &[u8],
 ) -> Result<(std::fs::File, u64), io::Error> {
     let byte_size = ((size - 1) >> 3) as u64 + 1;
@@ -90,11 +92,15 @@ fn create_bitvec_file(
         .write(true)
         .create(true)
         .open(filename)?;
-    // two magic bytes, u16 header length, header, u64 bitvec length, bitvec
-    let total_header_size = (2 + 2 + header.len() + 8) as u64;
+    let magic_len = if let Some(m) = magic { m.len() } else { 0 };
+    // two magic bytes indicating file type (if passed in), u16 header length, header, u64 bitvec length, bitvec
+    let total_header_size = (magic_len + 2 + header.len() + 8) as u64;
     file.set_len(total_header_size + byte_size)?;
 
-    file.write_all(&magic)?;
+    if let Some(m) = magic {
+        file.write_all(&m)?;
+    }
+
     let serialized_header_size: [u8; 2] = (header.len() as u16).to_be_bytes();
     file.write_all(&serialized_header_size)?;
     file.write_all(header)?;
@@ -112,7 +118,7 @@ impl MmapBitVec {
     pub fn create<P: AsRef<Path>>(
         filename: P,
         size: usize,
-        magic: [u8; 2],
+        magic: Option<[u8; 2]>,
         header: &[u8],
     ) -> Result<Self, io::Error> {
         assert!(
@@ -123,25 +129,25 @@ impl MmapBitVec {
         let (file, total_header_size) = create_bitvec_file(filename.as_ref(), size, magic, header)?;
         let mmap = unsafe { MmapOptions::new().offset(total_header_size).map_mut(&file) }?;
         Ok(MmapBitVec {
-            mmap: CommonMmap::MmapMut(mmap),
+            mmap: MmapKind::MmapMut(mmap),
             size,
             header: header.to_vec().into_boxed_slice(),
-            is_anon: false,
+            is_map_anonymous: false,
         })
     }
 
     /// Opens an existing `MmapBitVec` file
     ///
-    /// If magic bytes are passed, they are checked against the file.
+    /// If magic bytes are passed to indicate file type, they are checked against the file.
     ///
-    /// The header_size must be specified (as it isn't stored in the file to
-    /// allow the magic bytes to be set) and there is an optional read_only
+    /// The header size must be specified (as it isn't stored in the file to
+    /// allow the magic bytes to be set) and there is an optional `read_only`
     /// property that will lock the underlying mmap from writing.
     pub fn open<P>(filename: P, magic: Option<&[u8; 2]>, read_only: bool) -> Result<Self, io::Error>
     where
         P: AsRef<Path>,
     {
-        // we have to open with write=true to satisfy MmapMut (which we're
+        // we have to open with write access to satisfy `MmapMut` (which we're
         // using because there's no generic over both MmapMut and Mmap so
         // picking one simplifies the types)
         let mut file = OpenOptions::new()
@@ -149,10 +155,11 @@ impl MmapBitVec {
             .write(!read_only)
             .open(filename)?;
 
-        // read the magic bytes and (optionally) check if it matches
-        let mut file_magic = [0; 2];
-        file.read_exact(&mut file_magic)?;
         if let Some(m) = magic {
+            // read the magic bytes and (optionally) check if it matches
+            let mut file_magic = [0; 2];
+            file.read_exact(&mut file_magic)?;
+
             if &file_magic != m {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -177,7 +184,8 @@ impl MmapBitVec {
         file.read_exact(&mut serialized_size)?;
         let size: u64 = u64::from_be(unsafe { transmute(serialized_size) });
 
-        let total_header_size = (2 + 2 + header_size + 8) as u64;
+        let magic_len = if let Some(m) = magic { m.len() } else { 0 };
+        let total_header_size = (magic_len + 2 + header_size + 8) as u64;
         let byte_size = ((size - 1) >> 3) + 1;
         if file.metadata()?.len() != total_header_size + byte_size {
             return Err(io::Error::new(
@@ -192,25 +200,23 @@ impl MmapBitVec {
         }
 
         let mmap = if read_only {
-            // load the mmap itself and return the whole shebang
             let mmap = unsafe { MmapOptions::new().offset(total_header_size).map(&file) }?;
-            CommonMmap::Mmap(mmap)
+            MmapKind::Mmap(mmap)
         } else {
             let mmap = unsafe { MmapOptions::new().offset(total_header_size).map_mut(&file) }?;
-            CommonMmap::MmapMut(mmap)
+            MmapKind::MmapMut(mmap)
         };
 
         Ok(MmapBitVec {
             mmap,
             size: size as usize,
             header: header.into_boxed_slice(),
-            is_anon: false,
+            is_map_anonymous: false,
         })
     }
 
-    /// Opens a MmapBitVec file that doesn't have our "standard" file header format
-    ///
-    ///  Useful for opening legacy bitvec formats.
+    /// Opens a `MmapBitVec` file that doesn't have our "standard" file header format
+    /// TODO: what is the standard file header? if we put in the docstring on the struct we can say to refer to that here
     pub fn open_no_header<P>(filename: P, offset: usize) -> Result<Self, io::Error>
     where
         P: AsRef<Path>,
@@ -221,14 +227,14 @@ impl MmapBitVec {
         let mmap = unsafe { MmapOptions::new().offset(offset as u64).map(&f) }?;
 
         Ok(MmapBitVec {
-            mmap: CommonMmap::Mmap(mmap),
+            mmap: MmapKind::Mmap(mmap),
             size: byte_size * 8,
             header: Box::new([]),
-            is_anon: false,
+            is_map_anonymous: false,
         })
     }
 
-    /// Creates a MmapBitVec backed by memory.
+    /// Creates an in-memory  `MmapBitVec` (not backed by a file).
     ///
     /// Note that unlike the `create` and `open` no header is set.
     /// The MmapBitVec is also read/write by default.
@@ -236,10 +242,10 @@ impl MmapBitVec {
         let byte_size = ((size - 1) >> 3) as u64 + 1;
         let mmap = MmapOptions::new().len(byte_size as usize).map_anon()?;
         Ok(MmapBitVec {
-            mmap: CommonMmap::MmapMut(mmap),
+            mmap: MmapKind::MmapMut(mmap),
             size,
             header: vec![].into_boxed_slice(),
-            is_anon: true,
+            is_map_anonymous: true,
         })
     }
 
@@ -248,10 +254,10 @@ impl MmapBitVec {
     pub fn save_to_disk<P: AsRef<Path>>(
         &self,
         filename: P,
-        magic: [u8; 2],
+        magic: Option<[u8; 2]>,
         header: &[u8],
     ) -> Result<(), io::Error> {
-        if !self.is_anon {
+        if !self.is_map_anonymous {
             return Ok(());
         }
         let (mut file, _) = create_bitvec_file(filename.as_ref(), self.size, magic, header)?;
@@ -265,13 +271,13 @@ impl MmapBitVec {
         &self.header
     }
 
-    /// Read/copy an unaligned chunk of the MmapBitVec
+    /// Read/copy an unaligned chunk of the `MmapBitVec`
     ///
     /// # Panics
     ///
-    /// Explicitly panics if the end location, r.end, is outside the bounds
-    /// of the bit vector. A panic may also occur if r.start is greater than
-    /// r.end.
+    /// Explicitly panics if the end location, `r.end`, is outside the bounds
+    /// of the bit vector. A panic may also occur if `r.start` is greater than
+    /// `r.end`.
     pub fn get_range_bytes(&self, r: Range<usize>) -> Vec<u8> {
         if r.end > self.size {
             panic!("Range ends outside of BitVec")
@@ -299,16 +305,16 @@ impl MmapBitVec {
         v
     }
 
-    /// Set a unaligned range of bits in the bit vector from a byte slice.
+    /// Set an unaligned range of bits in the bit vector from a byte slice.
     ///
     /// Note this operation ORs the passed byteslice and the existing bitmask.
     ///
     /// # Panics
     ///
-    /// Explicitly panics if the end location, r.end, is outside the bounds
+    /// Explicitly panics if the end location, `r.end`, is outside the bounds
     /// of the bit vector or if the byte slice passed in is a different size
-    /// from the range specified. A panic may also occur if r.start is greater
-    /// than r.end.
+    /// from the range specified. A panic may also occur if `r.start` is greater
+    /// than `r.end`.
     pub fn set_range_bytes(&mut self, r: Range<usize>, x: &[u8]) {
         if r.end > self.size {
             panic!("Range ends outside of BitVec")
@@ -317,10 +323,10 @@ impl MmapBitVec {
         if ((new_size - 1) >> 3) + 1 != x.len() {
             panic!("Range and array passed are different sizes")
         }
-        // we basically ignore r.start except for checking that it roughly
-        // matches up with the size of the byte slice. this works because
+        // Ignoring r.start except for checking that it roughly
+        // matches up with the size of the byte slice. This works because
         // we're ORing the bits together, so any extra zeros at the front
-        // of the first byte in x shouldn't affect the final result at all
+        // of the first byte in x shouldn't affect the final result
         let max_len = 8 * x.len();
         let byte_idx_st = if r.end - 1 > max_len {
             ((r.end - 1 - max_len) >> 3) + 1
@@ -329,7 +335,10 @@ impl MmapBitVec {
         };
         let byte_idx_en = ((r.end - 1) >> 3) as usize;
 
-        let mmap: *mut u8 = self.mmap.as_mut_ptr();
+        let mmap: *mut u8 = self
+            .mmap
+            .as_mut_ptr()
+            .expect("set_range_bytes can only be called on a mutable mmap");
 
         let shift = 8 - (r.end & 7) as u8;
         let mask = 0xFFu8.checked_shr(u32::from(8 - shift)).unwrap_or(0xFF);
@@ -349,11 +358,11 @@ impl MmapBitVec {
 }
 
 impl BitVector for MmapBitVec {
-    /// Check a single value in the MmapBitVec, returning its true/false status
+    /// Check a single value in the `MmapBitVec`, returning its true/false status
     ///
     /// # Panics
     ///
-    /// Panics if the location, i, is outside the bounds of the bit vector
+    /// Panics if the location, `i`, is outside the bounds of the bit vector
     fn get(&self, i: usize) -> bool {
         if i > self.size {
             panic!("Invalid bit vector index");
@@ -369,7 +378,7 @@ impl BitVector for MmapBitVec {
     ///
     /// # Panics
     ///
-    /// Panics if the location, i, is outside the bounds of the bit vector
+    /// Panics if the location, `i`, is outside the bounds of the bit vector
     fn set(&mut self, i: usize, x: bool) {
         if i > self.size {
             panic!("Invalid bit vector index");
@@ -377,7 +386,10 @@ impl BitVector for MmapBitVec {
         let byte_idx = (i >> 3) as isize;
         let bit_idx = 7 - (i & 7) as u8;
 
-        let mmap: *mut u8 = self.mmap.as_mut_ptr();
+        let mmap: *mut u8 = self
+            .mmap
+            .as_mut_ptr()
+            .expect("set can only be called on a mutable mmap");
         unsafe {
             if x {
                 *mmap.offset(byte_idx) |= 1 << bit_idx
@@ -392,6 +404,7 @@ impl BitVector for MmapBitVec {
         self.size
     }
 
+    /// Return the number of set bits in the range `r`
     fn rank(&self, r: Range<usize>) -> usize {
         let byte_idx_st = (r.start >> 3) as usize;
         let byte_idx_en = ((r.end - 1) >> 3) as usize;
@@ -437,6 +450,7 @@ impl BitVector for MmapBitVec {
         bit_count
     }
 
+    /// Return the position of the `nth` set bit with `start` treated as the 0th position, or `None` if there is no set bit
     fn select(&self, n: usize, start: usize) -> Option<usize> {
         let byte_idx_st = (start >> 3) as usize;
         let size_front = 8u8 - (start & 7) as u8;
@@ -466,14 +480,14 @@ impl BitVector for MmapBitVec {
         None
     }
 
-    /// Read an unaligned chunk of the MmapBitVec into a u128
+    /// Read an unaligned chunk of the `MmapBitVec` into a `u128`
     ///
     /// # Panics
     ///
-    /// Explicitly panics if the end location, r.end, is outside the bounds
+    /// Explicitly panics if the end location, `r.end`, is outside the bounds
     /// of the bit vector or if the range specified is greater than 128 bits.
-    /// (Use `get_range` instead if you need to read larger chunks) A panic
-    /// may also occur if r.start is greater than r.end.
+    /// (Use `get_range_bytes` instead if you need to read larger chunks) A panic
+    /// will also occur when `r.start` is greater than `r.end`.
     fn get_range(&self, r: Range<usize>) -> u128 {
         if r.end - r.start > 128usize {
             panic!("Range too large (>128)")
@@ -495,8 +509,6 @@ impl BitVector for MmapBitVec {
         v >>= 7 - ((r.end - 1) & 7);
 
         if r.start < self.size - 128usize {
-            // really nasty/unsafe, but we're just reading a u64/u128 out instead of doing it
-            // byte-wise --- also does not work with legacy mode!!!
             unsafe {
                 // we have to transmute since we don't know if it's a u64 or u128
                 #[allow(clippy::transmute_ptr_to_ptr)]
@@ -517,15 +529,15 @@ impl BitVector for MmapBitVec {
         v & (u128::max_value() >> (128 - new_size))
     }
 
-    /// Set a unaligned range of bits using a u64.
+    /// Set an unaligned range of bits using a `u64`.
     ///
     /// Note this operation ORs the passed u64 and the existing bitmask
     ///
     /// # Panics
     ///
-    /// Explicitly panics if the end location, r.end, is outside the bounds
-    /// of the bit vector. A panic may also occur if r.start is greater than
-    /// r.end.
+    /// Explicitly panics if the end location, `r.end`, is outside the bounds
+    /// of the bit vector. A panic will also occur when `r.start` is greater than
+    /// `r.end`.
     fn set_range(&mut self, r: Range<usize>, x: u128) {
         if r.end > self.size {
             panic!("Range ends outside of BitVec")
@@ -542,9 +554,12 @@ impl BitVector for MmapBitVec {
             (x >> (new_size - size_front)) as u8
         };
 
-        // set front with an AND mask to make sure this all the 0's in the
-        // new value get masked over the existing 1's
-        let mmap: *mut u8 = self.mmap.as_mut_ptr();
+        // set front with an AND mask to make sure all the 0s in the
+        // new value get masked over the existing 1s
+        let mmap: *mut u8 = self
+            .mmap
+            .as_mut_ptr()
+            .expect("set_range can only be called on a mutable mmap");
         unsafe {
             *mmap.add(byte_idx_st) |= front_byte;
         }
@@ -554,7 +569,7 @@ impl BitVector for MmapBitVec {
             return;
         }
 
-        // set the last byte (also a "partial" byte like the first
+        // set the last byte (also a "partial" byte like the first)
         let mut size_back = (r.end & 7) as u8;
         if size_back == 0 {
             size_back = 8;
@@ -590,10 +605,13 @@ impl BitVector for MmapBitVec {
         let byte_idx_st = (r.start >> 3) as usize;
         let byte_idx_en = ((r.end - 1) >> 3) as usize;
 
-        let mmap: *mut u8 = self.mmap.as_mut_ptr();
+        let mmap: *mut u8 = self
+            .mmap
+            .as_mut_ptr()
+            .expect("clear range can only be called on a mutable mmap");
 
-        // set front with an AND mask to make sure this all the 0's in the
-        // new value get masked over the existing 1's
+        // set front with an AND mask to make sure all the 0s in the
+        // new value get masked over the existing 1s
         let size_front = 8u8 - (r.start & 7) as u8;
         if let Some(mask) = 0xFFu8.checked_shl(u32::from(size_front)) {
             unsafe {
@@ -606,7 +624,7 @@ impl BitVector for MmapBitVec {
             return;
         }
 
-        // set the last byte (also a "partial" byte like the first
+        // set the last byte (also a "partial" byte like the first)
         let mut size_back = (r.end & 7) as u8;
         if size_back == 0 {
             size_back = 8;
@@ -622,7 +640,7 @@ impl BitVector for MmapBitVec {
             return;
         }
 
-        // zero out all the middle bytes (maybe there's a faster way?)
+        // zero out all the middle bytes
         for byte_idx in (byte_idx_st + 1)..byte_idx_en {
             unsafe {
                 *mmap.add(byte_idx) = 0u8;
@@ -651,7 +669,7 @@ mod test {
         use std::fs::remove_file;
 
         let header = vec![];
-        let mut b = MmapBitVec::create("./test", 100, *b"!!", &header).unwrap();
+        let mut b = MmapBitVec::create("./test", 100, None, &header).unwrap();
         b.set(2, true);
         assert!(!b.get(1));
         assert!(b.get(2));
@@ -659,7 +677,7 @@ mod test {
         drop(b);
         assert!(Path::new("./test").exists());
 
-        let b = MmapBitVec::open("./test", Some(b"!!"), true).unwrap();
+        let b = MmapBitVec::open("./test", None, true).unwrap();
         assert!(!b.get(1));
         assert!(b.get(2));
         assert!(!b.get(100));
@@ -674,10 +692,10 @@ mod test {
         let header = vec![];
         // the bitvector has to be a size with a multiple of 8 because the
         // no_header code always opens to the end of the last byte
-        let _ = MmapBitVec::create("./test_headerless", 80, *b"!!", &header).unwrap();
+        let _ = MmapBitVec::create("./test_headerless", 80, None, &header).unwrap();
         assert!(Path::new("./test_headerless").exists());
         let b = MmapBitVec::open_no_header("./test_headerless", 12).unwrap();
-        assert_eq!(b.size(), 80);
+        assert_eq!(b.size(), 64);
         remove_file("./test_headerless").unwrap();
     }
 
@@ -831,9 +849,8 @@ mod test {
         b.set(56, true);
         b.set(127, true);
         let dir = tempfile::tempdir().unwrap();
-        b.save_to_disk(dir.path().join("test"), *b"!!", &[])
-            .unwrap();
-        let f = MmapBitVec::open(dir.path().join("test"), Some(b"!!"), false).unwrap();
+        b.save_to_disk(dir.path().join("test"), None, &[]).unwrap();
+        let f = MmapBitVec::open(dir.path().join("test"), None, false).unwrap();
         assert_eq!(f.get(0), true);
         assert_eq!(f.get(7), true);
         assert_eq!(f.get(56), true);

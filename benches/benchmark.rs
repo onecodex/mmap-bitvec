@@ -7,16 +7,15 @@ use std::mem::transmute;
 use std::ops::Range;
 
 use memmap2::{MmapMut, MmapOptions};
-use mmap_bitvec::{combinatorial::rank, BitVector, MmapBitVec};
+use mmap_bitvec::{BitVector, MmapBitVec};
 
 use criterion::{criterion_group, criterion_main, Criterion};
 
 type BitVecSlice = u64;
-const BIT_VEC_SLICE_SIZE: u8 = 64;
-const FILENAME: &str = "./bfield.mmap";
 
-// we could use an RNG, but I want to make sure everything is
-// as comparable as possible
+const BIT_VEC_SLICE_SIZE: u8 = 64;
+const FILENAME: &str = "./data/bfield.mmap";
+
 fn next_random(n: usize) -> usize {
     // https://en.wikipedia.org/wiki/Xorshift
     let mut x = n as u32;
@@ -40,8 +39,6 @@ fn get_range_simplified(mmap: &MmapMut, size: usize, l: usize) -> BitVecSlice {
     v >>= 7 - ((l + 63) & 7);
 
     if l < size - BIT_VEC_SLICE_SIZE as usize {
-        // really nasty/unsafe, but we're just reading a u64/u128 out instead of doing it
-        // byte-wise --- also does not work with legacy mode!!!
         unsafe {
             let lg_ptr: *const BitVecSlice = transmute(ptr.offset(byte_idx_st as isize));
             v |= (*lg_ptr).to_be() << (l & 7) >> (BIT_VEC_SLICE_SIZE - new_size);
@@ -82,8 +79,6 @@ fn get_range(mmap: &MmapMut, size: usize, r: Range<usize>) -> BitVecSlice {
     v >>= 7 - ((r.end - 1) & 7);
 
     if r.start < size - BIT_VEC_SLICE_SIZE as usize {
-        // really nasty/unsafe, but we're just reading a u64/u128 out instead of doing it
-        // byte-wise --- also does not work with legacy mode!!!
         unsafe {
             let lg_ptr: *const BitVecSlice = transmute(ptr.offset(byte_idx_st as isize));
             v |= (*lg_ptr).to_be() << (r.start & 7) >> (BIT_VEC_SLICE_SIZE - new_size);
@@ -114,7 +109,7 @@ fn bench_get_range_simplified() {
 
     let mut r = 0;
     let mut i = 1;
-    for _ in 0..100000 {
+    for _ in 0..100_000 {
         let l = i % (size - 64);
         r += get_range_simplified(&mmap, size, l).count_ones();
         i = next_random(i);
@@ -132,7 +127,7 @@ fn bench_get_range() {
 
     let mut r = 0;
     let mut i = 1;
-    for _ in 0..100000 {
+    for _ in 0..100_000 {
         let l = i % (size - 64);
         r += get_range(&mmap, size, l..l + 64).count_ones();
         i = next_random(i);
@@ -143,7 +138,7 @@ fn bench_get_range_actual() {
     let bitvec = MmapBitVec::open_no_header(FILENAME, 0).unwrap();
     let mut r = 0;
     let mut i = 1;
-    for _ in 0..100000 {
+    for _ in 0..100_000 {
         let l = i % (bitvec.size() - 64);
         r += bitvec.get_range(l..l + 64).count_ones();
         i = next_random(i);
@@ -151,7 +146,7 @@ fn bench_get_range_actual() {
 }
 
 fn bench_save_to_disk(bv: &MmapBitVec) {
-    bv.save_to_disk("hello.tmp", [0, 1], &[]).unwrap();
+    bv.save_to_disk("hello.tmp", Some([0, 1]), &[]).unwrap();
 }
 
 fn criterion_benchmark(c: &mut Criterion) {
@@ -161,12 +156,14 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("get_range", |b| b.iter(|| bench_get_range()));
     c.bench_function("save_to_disk", |b| {
-        let mut bitvec = MmapBitVec::from_memory(1_000_000_000).unwrap();
-        for i in 0..1_000_000_000 {
+        let mut bitvec = MmapBitVec::from_memory(100_000_000).unwrap();
+        for i in 0..100_000_000 {
             bitvec.set(i, true);
         }
         b.iter(|| bench_save_to_disk(&bitvec))
     });
+    // clean up temp file
+    std::fs::remove_file("./hello.tmp").unwrap();
 }
 
 criterion_group!(benches, criterion_benchmark);
