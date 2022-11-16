@@ -10,7 +10,10 @@ edition = "2021"
 readme = "./README.md"
 license = "MIT"
 repository = "https://github.com/onecodex/mmap-bitvec"
-
+exclude = [
+    ".github/",
+    ".gitignore"
+]
 
 [dependencies]
 memmap2 = "0.5"
