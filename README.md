@@ -1,7 +1,7 @@
 # mmap-bitvec #
 
 ![ci](https://github.com/onecodex/mmap-bitvec/workflows/ci/badge.svg)
-![crates.io](https://img.shields.io/crates/v/mmap-bitvec.svg)
+[![Crates.io Version](https://img.shields.io/crates/v/mmap-bitvec.svg)](https://crates.io/crates/mmap-bitvec)
 
 `mmap-bitvec` is a library for working with bit-vectors backed by memory-mapped files. Included is a simple Bloom filter built on top of such bit-vectors.
 
