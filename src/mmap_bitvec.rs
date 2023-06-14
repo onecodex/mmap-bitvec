@@ -513,7 +513,7 @@ impl BitVector for MmapBitVec {
                 // we have to transmute since we don't know if it's a u64 or u128
                 #[allow(clippy::transmute_ptr_to_ptr)]
                 let lg_ptr: *const u128 = transmute(ptr.add(byte_idx_st));
-                v |= (*lg_ptr).to_be() << (r.start & 7) >> (128 - new_size);
+                v |= lg_ptr.read_unaligned().to_be() << (r.start & 7) >> (128 - new_size);
             }
         } else {
             // special case if we can't get a whole u64 out without running outside the buffer
@@ -526,7 +526,7 @@ impl BitVector for MmapBitVec {
         }
 
         // mask out the high bits in case we copied extra
-        v & (u128::max_value() >> (128 - new_size))
+        v & (u128::MAX >> (128 - new_size))
     }
 
     /// Set an unaligned range of bits using a `u64`.
