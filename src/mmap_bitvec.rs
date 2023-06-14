@@ -192,7 +192,7 @@ impl MmapBitVec {
                 io::ErrorKind::InvalidData,
                 format!(
                     "file should be {} bytes (with {} header), but file is {} bytes",
-                    byte_size + total_header_size as u64,
+                    byte_size + total_header_size,
                     total_header_size,
                     file.metadata()?.len(),
                 ),
@@ -282,9 +282,9 @@ impl MmapBitVec {
         if r.end > self.size {
             panic!("Range ends outside of BitVec")
         }
-        let byte_idx_st = (r.start >> 3) as usize;
-        let byte_idx_en = ((r.end - 1) >> 3) as usize;
-        let new_size: usize = (((r.end - r.start) as usize - 1) >> 3) + 1;
+        let byte_idx_st = r.start >> 3;
+        let byte_idx_en = (r.end - 1) >> 3;
+        let new_size: usize = (((r.end - r.start) - 1) >> 3) + 1;
 
         let ptr: *const u8 = self.mmap.as_ptr();
         let mut v = vec![0; new_size];
@@ -333,7 +333,7 @@ impl MmapBitVec {
         } else {
             0
         };
-        let byte_idx_en = ((r.end - 1) >> 3) as usize;
+        let byte_idx_en = (r.end - 1) >> 3;
 
         let mmap: *mut u8 = self
             .mmap
@@ -406,8 +406,8 @@ impl BitVector for MmapBitVec {
 
     /// Return the number of set bits in the range `r`
     fn rank(&self, r: Range<usize>) -> usize {
-        let byte_idx_st = (r.start >> 3) as usize;
-        let byte_idx_en = ((r.end - 1) >> 3) as usize;
+        let byte_idx_st = r.start >> 3;
+        let byte_idx_en = (r.end - 1) >> 3;
         let mmap: *const u8 = self.mmap.as_ptr();
 
         let mut bit_count = 0usize;
@@ -452,7 +452,7 @@ impl BitVector for MmapBitVec {
 
     /// Return the position of the `nth` set bit with `start` treated as the 0th position, or `None` if there is no set bit
     fn select(&self, n: usize, start: usize) -> Option<usize> {
-        let byte_idx_st = (start >> 3) as usize;
+        let byte_idx_st = start >> 3;
         let size_front = 8u8 - (start & 7) as u8;
         let mmap: *const u8 = self.mmap.as_ptr();
 
@@ -494,8 +494,8 @@ impl BitVector for MmapBitVec {
         } else if r.end > self.size {
             panic!("Range ends outside of BitVec")
         }
-        let byte_idx_st = (r.start >> 3) as usize;
-        let byte_idx_en = ((r.end - 1) >> 3) as usize;
+        let byte_idx_st = r.start >> 3;
+        let byte_idx_en = (r.end - 1) >> 3;
         let new_size: u8 = (r.end - r.start) as u8;
 
         let mut v;
@@ -542,8 +542,8 @@ impl BitVector for MmapBitVec {
         if r.end > self.size {
             panic!("Range ends outside of BitVec")
         }
-        let byte_idx_st = (r.start >> 3) as usize;
-        let byte_idx_en = ((r.end - 1) >> 3) as usize;
+        let byte_idx_st = r.start >> 3;
+        let byte_idx_en = (r.end - 1) >> 3;
         let new_size: u8 = (r.end - r.start) as u8;
 
         // split off the front byte
@@ -602,8 +602,8 @@ impl BitVector for MmapBitVec {
         if (r.end - 1) > self.size {
             panic!("Range ends outside of BitVec")
         }
-        let byte_idx_st = (r.start >> 3) as usize;
-        let byte_idx_en = ((r.end - 1) >> 3) as usize;
+        let byte_idx_st = r.start >> 3;
+        let byte_idx_en = (r.end - 1) >> 3;
 
         let mmap: *mut u8 = self
             .mmap
