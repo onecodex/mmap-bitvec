@@ -701,7 +701,7 @@ mod test {
 
     #[test]
     fn test_bitvec_get_range() {
-        let mut b = MmapBitVec::from_memory(128).unwrap();
+        let mut b = MmapBitVec::from_memory(1024).unwrap();
         b.set(2, true);
         b.set(3, true);
         b.set(5, true);
