@@ -76,7 +76,7 @@ pub struct MmapBitVec {
     pub size: usize,
     /// Arbitrary data prepended to file (when file-backed)
     header: Box<[u8]>,
-    /// controls whether the mapping is backed by a file (see `MAP_ANONYMOUS` here: https://man7.org/linux/man-pages/man2/mmap.2.html)
+    /// controls whether the mapping is backed by a file (see `MAP_ANONYMOUS` here: <https://man7.org/linux/man-pages/man2/mmap.2.html>)
     is_map_anonymous: bool,
 }
 
