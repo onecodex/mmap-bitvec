@@ -43,4 +43,4 @@ Using the Bloom filter:
 
 This project is licensed under the [MIT license].
 
-[MIT license]: https://github.com/onecodex/mmap-bitvec/blob/master/LICENSE
+[MIT license]: https://github.com/onecodex/mmap-bitvec/blob/main/LICENSE
